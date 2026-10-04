@@ -161,3 +161,16 @@ def test_svg_content_outside_the_artboard_is_kept(tmp_path):
     )
     xs = [x for shape in load_artwork(path).shapes for line in shape.polylines for x, _ in line]
     assert min(xs) == pytest.approx(-5.0)
+
+
+def test_pdf_page_sized_border_keeps_all_four_sides(tmp_path):
+    path = tmp_path / "border.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page(width=283.4646, height=283.4646)
+    page.draw_rect(page.rect, color=(0, 0, 0))
+    doc.save(path)
+    doc.close()
+    art = load_artwork(path)
+    points = [point for shape in art.shapes for line in shape.polylines for point in line]
+    assert max(x for x, _ in points) == pytest.approx(art.width_mm, abs=0.01)
+    assert max(y for _, y in points) == pytest.approx(art.height_mm, abs=0.01)
