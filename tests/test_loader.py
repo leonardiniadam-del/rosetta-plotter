@@ -171,6 +171,8 @@ def test_pdf_page_sized_border_keeps_all_four_sides(tmp_path):
     doc.save(path)
     doc.close()
     art = load_artwork(path)
-    points = [point for shape in art.shapes for line in shape.polylines for point in line]
-    assert max(x for x, _ in points) == pytest.approx(art.width_mm, abs=0.01)
-    assert max(y for _, y in points) == pytest.approx(art.height_mm, abs=0.01)
+    shape, = art.shapes
+    border, = shape.polylines  # one unbroken loop: all four sides survived clipping
+    assert len(border) == 5
+    assert max(x for x, _ in border) == pytest.approx(art.width_mm, abs=0.01)
+    assert max(y for _, y in border) == pytest.approx(art.height_mm, abs=0.01)
