@@ -11,7 +11,8 @@ from rosetta.engine import awake
 from rosetta.engine import options as engine_options
 from rosetta.engine.options import PlotSettings
 from rosetta.engine.runner import (
-    MESSAGES, PlotOutcome, PlotRunner, Progress, estimate, outcome_for_code, set_resume_origin_home,
+    MESSAGES, PlotOutcome, PlotRunner, Progress, estimate, outcome_for_code, paused_layer,
+    set_resume_origin_home,
 )
 from rosetta.models import get_model
 from rosetta.plotsvg import plot_svg
@@ -381,6 +382,20 @@ def test_set_resume_origin_home():
     svg = '<svg xmlns="http://www.w3.org/2000/svg"><plotdata last_x="12.5" last_y="4.0"/></svg>'
     updated = set_resume_origin_home(svg)
     assert 'last_x="0"' in updated and 'last_y="0"' in updated
+
+
+def test_paused_layer_is_the_layer_a_paused_plot_will_finish():
+    paused, _ = _plot_and_pause()
+    assert paused_layer(paused.resume_svg) == 1
+    assert paused_layer(paused.resume_svg.replace('layer="1"', 'layer="2"')) == 2
+
+
+def test_paused_layer_is_none_when_there_is_nothing_to_resume_or_no_single_layer():
+    paused, _ = _plot_and_pause()
+    assert paused_layer(layered_svg()) is None  # a plot that never ran has no progress data
+    assert paused_layer(paused.resume_svg.replace('layer="1"', 'layer="-2"')) is None  # every layer
+    assert paused_layer(paused.resume_svg.replace('pause_dist="', 'pause_dist="-')) is None  # not paused
+    assert paused_layer("<svg") is None
 
 
 def test_set_resume_origin_home_without_data():

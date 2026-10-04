@@ -351,6 +351,16 @@ class PlotRunner:
             logger.exception("The progress callback failed")
 
 
+def paused_layer(resume_svg: str) -> int | None:
+    """The layer a saved paused plot will finish, or None if it holds no resumable plot or the
+    layer isn't recorded (EMS's "every layer")."""
+    data = _paused_plotdata(resume_svg)
+    if data is None:
+        return None
+    layer = _int_attr(data, "layer", -2)
+    return layer if layer >= 1 else None
+
+
 def set_resume_origin_home(resume_svg: str) -> str:
     """After the student slides the pen back Home by hand, make the resume start from Home."""
     if _plotdata(resume_svg) is None:

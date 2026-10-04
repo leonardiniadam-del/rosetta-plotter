@@ -234,6 +234,24 @@ def test_goto_that_the_engine_cannot_send_means_the_plotter_was_lost():
         plotter.goto(10, 10)
 
 
+@pytest.mark.parametrize("broken, call", [
+    ("penup", lambda plotter: plotter.pen_up()),
+    ("pendown", lambda plotter: plotter.pen_down()),
+    ("update", lambda plotter: plotter.set_pen_down_height(40)),
+    ("penup", lambda plotter: plotter.motors_off()),  # motors_off lifts the pen first
+])
+def test_pen_and_motor_commands_after_a_usb_loss_say_the_connection_was_lost(fake_ebb, broken, call):
+    plotter, fakes = _connected()
+
+    def lost(*args):
+        raise RuntimeError("Not connected to AxiDraw")  # what EMS says after a USB drop
+
+    setattr(fakes[0], broken, lost)
+    with pytest.raises(PlotterStopped, match="Lost the connection to the plotter."):
+        call(plotter)
+    assert ("motors_off", "COM9") not in fake_ebb  # it didn't pretend the motors were released
+
+
 def test_goto_after_a_pause_raises_instead_of_pretending_to_move():
     plotter, fakes = _connected(stop_after_moves=1)
     with pytest.raises(PlotterStopped, match="paused or stopped"):
@@ -384,6 +402,15 @@ def test_real_ems_reads_the_nickname_and_the_identity(monkeypatch):
     plotter.disconnect()
 
 
+def test_real_ems_reads_whether_the_power_adapter_is_plugged_in(monkeypatch):
+    plugged, _ = _on_real_ems(monkeypatch)
+    assert plugged.power_ok() is True
+    plugged.disconnect()
+    unplugged, _ = _on_real_ems(monkeypatch, voltage=0)
+    assert unplugged.power_ok() is False
+    unplugged.disconnect()
+
+
 def test_real_ems_blank_nickname_reads_as_none(monkeypatch):
     plotter, _ebb = _on_real_ems(monkeypatch)
     assert plotter.nickname() is None
@@ -430,5 +457,8 @@ def test_real_ems_lost_usb_cable_during_a_trace_is_reported(monkeypatch):
         plotter.trace((50, 40, 250, 180))
     with pytest.raises(PlotterStopped, match="Lost the connection"):  # EMS: "Not connected to AxiDraw"
         plotter.goto(100, 100)
+    for command in (plotter.pen_up, plotter.pen_down, plotter.motors_off, lambda: plotter.set_pen_down_height(40)):
+        with pytest.raises(PlotterStopped, match="Lost the connection"):  # not EMS's bare RuntimeError
+            command()
     plotter.disconnect()
     assert ebb.closed

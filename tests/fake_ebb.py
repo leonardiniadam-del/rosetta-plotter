@@ -86,18 +86,27 @@ class FakeEBB:
 
 
 class IFakeEBB(FakeEBB):
-    """FakeEBB plus what the interactive Plotter also asks: firmware version, nickname, reboot."""
+    """FakeEBB plus what the interactive Plotter also asks: firmware, nickname, power, reboot.
 
-    def __init__(self, version="2.8.1", nickname="", **kw):
+    voltage is the motor-supply reading in the QC reply: about 300 with the power adapter in,
+    near 0 without it (EMS and Rosetta treat anything under 250 as "unplugged").
+    """
+
+    def __init__(self, version="2.8.1", nickname="", voltage=300, **kw):
         super().__init__(**kw)
         self.version = version
         self.nickname = nickname
+        self.voltage = voltage
 
     def write(self, data):
         if self.dead:
             return super().write(data)
         cmd = data.decode("ascii").strip()
         name = cmd.split(",")[0].upper()
+        if name == "QC":
+            self.log.append(cmd)
+            self.replies += [f"0300,{self.voltage:04d}\r\n".encode(), b"OK\r\n"]
+            return
         if name == "V":
             self.log.append(cmd)
             self.replies += [f"EBBv13_and_above EB Firmware Version {self.version}\r\n".encode()]

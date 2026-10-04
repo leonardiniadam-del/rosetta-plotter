@@ -102,8 +102,10 @@ class Plotter:
             self.disconnect()
 
     def motors_off(self) -> None:
+        """Lift the pen and let go of the carriage, so it can be slid by hand. EMS never does this
+        itself: after a plot, or when the port closes, the motors keep holding the carriage."""
         self.pen_up()
-        ebb_motion.sendDisableMotors(self._port(), False)
+        self._lost_means_stopped(lambda ad: ebb_motion.sendDisableMotors(ad.plot_status.port, False))
 
     def set_home(self) -> None:
         """The student has slid the pen to Home: reconnect so EMS treats here as (0, 0)."""
@@ -135,11 +137,11 @@ class Plotter:
         self.goto(x + dx, y + dy)
 
     def pen_up(self) -> None:
-        self._require().penup()
+        self._lost_means_stopped(lambda ad: ad.penup())
         self._pen_is_down = False
 
     def pen_down(self) -> None:
-        self._require().pendown()
+        self._lost_means_stopped(lambda ad: ad.pendown())
         self._pen_is_down = True
 
     def set_pen_down_height(self, percent: int) -> None:
@@ -149,10 +151,14 @@ class Plotter:
         self._settings.pen_down = percent
         ad.options.pen_pos_down = percent
         ad.options.pen_pos_up = self._settings.pen_up
-        ad.update()
-        if self._pen_is_down:  # re-lower so the new height shows on the real pen
-            ad.penup()
-            ad.pendown()
+
+        def apply(ad):
+            ad.update()
+            if self._pen_is_down:  # re-lower so the new height shows on the real pen
+                ad.penup()
+                ad.pendown()
+
+        self._lost_means_stopped(apply)
 
     def trace(self, rect: tuple[float, float, float, float]) -> None:
         """Pen up: go around rect so the student sees where the drawing lands, then Home."""
@@ -182,13 +188,18 @@ class Plotter:
             raise RuntimeError("Not connected to a plotter.")
         return self._ad
 
+    def _lost_means_stopped(self, action) -> None:
+        """Run action(ad); EMS's bare RuntimeError("Not connected...") after a USB drop becomes PlotterStopped."""
+        ad = self._require()
+        try:
+            action(ad)
+        except RuntimeError as lost:  # EMS: "Not connected to AxiDraw" after a USB drop
+            raise PlotterStopped("Lost the connection to the plotter.") from lost
+
     def _checked_move(self, move) -> None:
         """Run move(ad); turn "the plotter stopped or is gone" into PlotterStopped."""
         ad = self._require()
-        try:
-            move(ad)
-        except RuntimeError as lost:  # EMS: "Not connected to AxiDraw" after a USB drop
-            raise PlotterStopped("Lost the connection to the plotter.") from lost
+        self._lost_means_stopped(move)
         if ad.plot_status.stopped:  # 102 pause button, 104 lost USB: EMS now ignores moves
             raise PlotterStopped("The plotter was paused or stopped before the move finished.")
 
