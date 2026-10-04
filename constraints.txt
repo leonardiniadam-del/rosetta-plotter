@@ -1,0 +1,6 @@
+# Versions EMS tested AxiDraw API 3.9.6 with (AxiDraw_API_396/requirements/requirements.txt).
+# lxml, requests, urllib3, certifi, idna, charset-normalizer and tqdm are deliberately left
+# unpinned: Rosetta needs lxml>=5, and the others don't affect plotting.
+plotink==1.9.0
+ink-extensions==2.0.0
+pyserial==3.5
