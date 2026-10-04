@@ -1741,6 +1741,16 @@ git add src\rosetta\loader.py tests\test_loader.py
 git commit -m "feat: load SVG/PDF/AI artwork with problem checks" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
+> **Review follow-up (applied during execution, commit `a839247`):**
+> - **`pdf_page_to_svg`** now returns `PdfPage(svg, has_text, has_clip, page_count)`.
+> - **New `ImportProblem` messages** for password-protected PDFs, non-PDF files, out-of-range pages, unreadable or locked files, and `.svgz`.
+> - **Large embedded images** parse with `huge_tree`, and their image data is blanked in the SVG.
+> - **Visible text** is detected through `get_texttrace`, so invisible OCR text is no longer reported.
+> - **Clipping masks smaller than the page** are detected with `get_drawings(extended=True)`, compared in the page's unrotated space.
+> - **Multi-page PDFs** name their pieces "<stem> (page N)".
+> - **Blocking errors** caused by text or images now explain that cause.
+> - **PyMuPDF** is pinned to 1.28.2 in `constraints.txt`.
+
 ---
 
 ### Task 12: Geometry (placement, bounds, intersection)
@@ -2007,6 +2017,81 @@ Expected: `14 passed`
 ```powershell
 git add src\rosetta\geometry.py tests\test_clip.py
 git commit -m "feat: clip polylines to a rectangle" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 13b: Clip PDF artwork to its page box (review follow-up)
+
+A PDF hides anything outside its page box, but MuPDF still writes that content into the SVG and EMS would draw it. Clip PDF-sourced shapes to the page, so what plots matches what the PDF shows.
+
+**Files:**
+- Modify: `src/rosetta/loader.py`
+- Test: `tests/test_loader.py`
+
+- [ ] **Step 1: Write the failing tests** (append to `tests/test_loader.py`)
+
+```python
+def test_pdf_content_outside_the_page_is_not_drawn(tmp_path):
+    path = tmp_path / "overhang.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page(width=100, height=100)
+    page.draw_rect(pymupdf.Rect(-50, 10, 50, 50), color=(0, 0, 0))  # half off the left edge
+    page.draw_line((-100, -100), (-50, -50), color=(1, 0, 0))  # entirely off the page
+    doc.save(path)
+    doc.close()
+    art = load_artwork(path)
+    xs = [x for shape in art.shapes for line in shape.polylines for x, _ in line]
+    assert min(xs) == pytest.approx(0.0, abs=0.01)
+    assert {shape.color for shape in art.shapes} == {"#000000"}
+
+
+def test_svg_content_outside_the_artboard_is_kept(tmp_path):
+    path = tmp_path / "overhang.svg"
+    path.write_bytes(
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10">'
+        b'<line x1="-5" y1="5" x2="5" y2="5" stroke="black"/></svg>'
+    )
+    xs = [x for shape in load_artwork(path).shapes for line in shape.polylines for x, _ in line]
+    assert min(xs) == pytest.approx(-5.0)
+```
+
+- [ ] **Step 2: Run them to verify the PDF test fails**
+
+Run: `.venv\Scripts\python -m pytest tests\test_loader.py -v -k outside`
+Expected: `test_pdf_content_outside_the_page_is_not_drawn` FAILS (min x is negative). The SVG test passes; it pins that only PDFs are clipped.
+
+- [ ] **Step 3: Implement**
+
+In `src/rosetta/loader.py`:
+- Add `from dataclasses import replace` and `from rosetta.geometry import clip_polyline`.
+- Add the helper below.
+- Where the PDF branch's flattened shapes are produced, run them through it before `scan_shapes`, so issue counts reflect what will be drawn.
+
+```python
+def _clip_to_page(shapes: list[Shape], width_mm: float, height_mm: float) -> list[Shape]:
+    """A PDF hides anything outside its page box; drop it so it isn't drawn either."""
+    page = (0.0, 0.0, width_mm, height_mm)
+    kept = []
+    for shape in shapes:
+        polylines = tuple(
+            tuple(run) for line in shape.polylines for run in clip_polyline(line, page)
+        )
+        if polylines:
+            kept.append(replace(shape, polylines=polylines))
+    return kept
+```
+
+- [ ] **Step 4: Run all tests**
+
+Run: `.venv\Scripts\python -m pytest -q`
+Expected: all pass.
+
+- [ ] **Step 5: Commit**
+
+```powershell
+git add src\rosetta\loader.py tests\test_loader.py
+git commit -m "fix: clip PDF artwork to its page box" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
