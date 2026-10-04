@@ -2108,7 +2108,8 @@ git commit -m "fix: clip PDF artwork to its page box" -m "Co-Authored-By: Claude
 import pytest
 
 from rosetta.compose import (
-    DEFAULT_MARGIN_MM, ColorGroup, Material, PlacedPiece, Placement, compose_job, initial_placement,
+    DEFAULT_MARGIN_MM, REACH_EDGE_INSET_MM, ColorGroup, Material, PlacedPiece, Placement,
+    compose_job, initial_placement,
 )
 from rosetta.flatten import Shape
 from rosetta.loader import Artwork
@@ -2157,8 +2158,27 @@ def test_clipped_to_machine_reach():
     art = _art(10, 10, [_line("#000000", (0, 0), (10, 0))])
     # Paper hangs past the A4 machine's 299.974 mm reach.
     job = compose_job(A4_MACHINE, Material(295, 0, 50, 50), [PlacedPiece(art, Placement(x=0, y=1))])
-    assert job.groups[0].polylines[0][-1][0] == pytest.approx(299.974)
+    assert job.groups[0].polylines[0][-1][0] == pytest.approx(299.974 - REACH_EDGE_INSET_MM)
     assert job.clipped is True
+
+
+def test_nothing_lands_on_the_far_edge_of_the_reach():
+    # EMS skips lines lying exactly on the page's far edges, so Rosetta stays just inside.
+    art = _art(400, 10, [_line("#000000", (0, 5), (400, 5))])
+    job = compose_job(A4_MACHINE, Material(0, 0, 400, 300), [PlacedPiece(art, Placement())])
+    travel_x, _ = A4_MACHINE.travel_mm
+    far_x = max(x for line in job.groups[0].polylines for x, _ in line)
+    assert far_x == pytest.approx(travel_x - REACH_EDGE_INSET_MM)
+
+
+@pytest.mark.parametrize(
+    "placement",
+    [Placement(scale=0), Placement(scale=-1), Placement(scale=float("nan")), Placement(x=float("inf"))],
+)
+def test_invalid_placements_are_rejected(placement):
+    art = _art(10, 10, [_line("#000000", (0, 0), (10, 0))])
+    with pytest.raises(ValueError):
+        compose_job(A4_MACHINE, Material(0, 0, 50, 50), [PlacedPiece(art, placement)])
 
 
 def test_white_skipped_by_default_but_can_be_kept():
@@ -2168,9 +2188,10 @@ def test_white_skipped_by_default_but_can_be_kept():
     assert len(compose_job(A4_MACHINE, Material(0, 0, 50, 50), pieces, skip_white=False).groups) == 1
 
 
-def test_initial_placement_matching_paper_goes_to_corner():
-    art = _art(215.9, 279.4, [])
-    assert initial_placement(art, Material(0, 0, 216, 279)) == Placement(0, 0, 1.0, 0)
+def test_initial_placement_matching_paper_goes_to_corner_and_never_overhangs():
+    placement = initial_placement(_art(215.9, 279.4, []), Material(0, 0, 216, 279))
+    assert (placement.x, placement.y, placement.rotation) == (0.0, 0.0, 0)
+    assert placement.scale == pytest.approx(279 / 279.4)  # shrunk by the 0.4 mm it overhung
 
 
 def test_initial_placement_centers_and_shrinks_to_fit():
@@ -2202,6 +2223,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'rosetta.compose'`
 `src/rosetta/compose.py`:
 ```python
 """Put artwork on paper: placement, clipping to paper and machine reach, grouping by pen color."""
+import math
 from dataclasses import dataclass, field
 
 from rosetta.colors import color_name, is_white
@@ -2211,6 +2233,9 @@ from rosetta.models import MachineModel
 
 DEFAULT_MARGIN_MM = 6.35  # 0.25 in
 SAME_SIZE_TOLERANCE_MM = 1.0
+# EMS doesn't draw lines lying exactly on the plot page's far (max x / max y) edges, and the
+# page is the machine's reach, so keep everything this far inside them.
+REACH_EDGE_INSET_MM = 0.01
 
 
 @dataclass(frozen=True)
@@ -2267,11 +2292,13 @@ def compose_job(
     skip_white: bool = True,
 ) -> Job:
     travel_x, travel_y = model.travel_mm
-    clip_rect = intersect(material.rect, (0.0, 0.0, travel_x, travel_y))
+    reach = (0.0, 0.0, travel_x - REACH_EDGE_INSET_MM, travel_y - REACH_EDGE_INSET_MM)
+    clip_rect = intersect(material.rect, reach)
     groups: dict[str, ColorGroup] = {}
     clipped = False
     for piece in pieces:
         art, placement = piece.artwork, piece.placement
+        _check_placement(placement)
         for shape in art.shapes:
             if skip_white and is_white(shape.color):
                 continue
@@ -2295,19 +2322,29 @@ def compose_job(
     return Job(kept, bbox([line for group in kept for line in group.polylines]), clipped)
 
 
+def _check_placement(placement: Placement) -> None:
+    """Placements come from the UI; refuse values that would put NaN or mirrored art in the plot."""
+    if not (math.isfinite(placement.x) and math.isfinite(placement.y)):
+        raise ValueError(f"Placement position must be finite: {placement}")
+    if not (math.isfinite(placement.scale) and placement.scale > 0):
+        raise ValueError(f"Placement scale must be a positive number: {placement}")
+
+
 def initial_placement(
     artwork: Artwork, material: Material, margin: float = DEFAULT_MARGIN_MM
 ) -> Placement:
     """Where a newly imported piece lands (spec §5, step 3).
 
-    Artwork drawn at the paper's size lands exactly on the paper. Anything else is
-    centered and shrunk, never enlarged, to fit inside the margins.
+    Artwork drawn at the paper's size lands exactly on the paper, shrunk by the fraction of a
+    millimetre it may overhang so no edge gets cut. Anything else is centered and shrunk,
+    never enlarged, to fit inside the margins.
     """
     if (
         abs(artwork.width_mm - material.width) <= SAME_SIZE_TOLERANCE_MM
         and abs(artwork.height_mm - material.height) <= SAME_SIZE_TOLERANCE_MM
     ):
-        return Placement(0.0, 0.0, 1.0, 0)
+        scale = min(1.0, material.width / artwork.width_mm, material.height / artwork.height_mm)
+        return Placement(0.0, 0.0, scale, 0)
     usable_width = max(material.width - 2 * margin, 1.0)
     usable_height = max(material.height - 2 * margin, 1.0)
     scale = min(1.0, usable_width / artwork.width_mm, usable_height / artwork.height_mm)
@@ -2318,7 +2355,7 @@ def initial_placement(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv\Scripts\python -m pytest tests\test_compose.py -v`
-Expected: `9 passed`
+Expected: `14 passed`
 
 - [ ] **Step 5: Commit**
 
