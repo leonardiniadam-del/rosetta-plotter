@@ -3850,17 +3850,20 @@ Expected: `2 pen colors` (red, then black), plus a time per layer.
    - The tool checks the power and the plotter's stored model, then switches the motors off. Slide the pen Home when asked.
    - With the pen lowered, check it just touches the paper.
 3. Repeat with a different `--pen-down` (0–80; lower numbers sit lower) until a test line draws cleanly. Use that value below.
+4. If the pen barely lifts or doesn't lift at all, the plotter probably has the brushless pen-lift upgrade. Re-run `identify --model N --penlift 3 --label "PSU Lab"`, then try again.
 
 - [ ] **Step 4: Trace and plot**
 
 1. Run `.venv\Scripts\rosetta-plot trace out\plot.svg --pen-down P`. Check that the pen outlines the region from (20, 20) to (120, 140) mm, then returns Home.
+   - Run it once more and press **Ctrl+C** partway around. Confirm it stops with the pen up, says the motors are off, and asks you to slide the pen Home.
 2. Run `.venv\Scripts\rosetta-plot plot out\plot.svg --pen-down P` and follow the prompts.
-   - **Ctrl+C:** during the red layer, press **Ctrl+C**. At the menu type `r` and confirm it resumes cleanly.
+   - **Ctrl+C:** keep a hand near the plotter's physical pause button for this first test. During the red layer, press **Ctrl+C** once. At the menu type `r` and confirm it resumes cleanly.
    - **Physical pause button:** press it once and confirm the same menu appears. This time type `h`, check the pen goes Home, then press Enter to resume.
    - **Stopping and finishing later:** on a second sheet, pause during the red layer and type `q`. The tool turns the motors off and saves `out\plot.resume.svg`.
      - Slide the pen Home.
      - Run `.venv\Scripts\rosetta-plot plot out\plot.svg --pen-down P --resume` and confirm it finishes the red layer and then the black layer.
-     - Don't re-run `prepare` between stopping and resuming.
+     - Don't re-run `prepare` between stopping and resuming. If you do, `--resume` refuses, because the saved `plot.resume.json` records which version of `plot.svg` it belongs to.
+     - If you stop between colors (at a "Load the … pen" prompt), there's nothing to resume. The tool says so. To finish, prepare a job with only the remaining colors.
 
 - [ ] **Step 5: Measure, then test unplugging**
 
