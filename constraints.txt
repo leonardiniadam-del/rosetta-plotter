@@ -4,3 +4,5 @@
 plotink==1.9.0
 ink-extensions==2.0.0
 pyserial==3.5
+# PyMuPDF's SVG output (clip groups, layers, images) changes between versions; pin what's tested.
+pymupdf==1.28.2
