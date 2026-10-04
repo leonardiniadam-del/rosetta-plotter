@@ -57,4 +57,40 @@ def test_unsupported_selectors_are_ignored():
 def test_normalize_runs_inline_css_on_illustrator_export():
     doc = normalize(samples.ILLUSTRATOR_EXPORT)
     rect = doc.root.find(f"{{{SVG}}}rect")
-    assert "stroke:#ff0000" in rect.get("style")
+    assert _style(rect) == {"fill": "none", "stroke": "#ff0000"}
+
+
+def test_style_is_reduced_to_properties_ems_reads():
+    root = _root('<rect style="stroke:red;font-family:&quot;A;B&quot;;fill:url(data:image/png;base64,AAA);stroke-width:2" width="1" height="1"/>')
+    inline_css(root)
+    assert _style(root.find(f"{{{SVG}}}rect")) == {"stroke": "red"}
+
+
+def test_group_class_is_written_so_children_inherit():
+    root = _root('<style>.g{stroke:red}</style><g class="g"><path d="M0,0 L1,1"/></g>')
+    inline_css(root)
+    assert _style(root.find(f"{{{SVG}}}g")) == {"stroke": "red"}
+
+
+def test_multiple_style_blocks_cdata_comments_and_at_rules():
+    root = _root(
+        "<style><![CDATA[.a{stroke:red}]]></style>"
+        "<style>/* note */ .b{FILL:blue} @media print{.a{stroke:green}}</style>"
+        '<rect class="a b" width="1" height="1"/>'
+    )
+    inline_css(root)
+    assert _style(root.find(f"{{{SVG}}}rect")) == {"stroke": "red", "fill": "blue"}
+
+
+def test_source_order_breaks_specificity_ties():
+    root = _root('<style>.a{stroke:red} .b{stroke:blue}</style><rect class="a b" width="1" height="1"/>')
+    inline_css(root)
+    assert _style(root.find(f"{{{SVG}}}rect"))["stroke"] == "blue"
+
+
+def test_inline_css_is_idempotent():
+    root = _root('<style>.a{stroke:red}</style><rect class="a" style="fill:none" width="1" height="1"/>')
+    inline_css(root)
+    first = root.find(f"{{{SVG}}}rect").get("style")
+    inline_css(root)
+    assert root.find(f"{{{SVG}}}rect").get("style") == first
