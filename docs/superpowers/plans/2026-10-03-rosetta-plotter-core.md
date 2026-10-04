@@ -3095,6 +3095,22 @@ def test_goto_and_jog_stay_within_reach():
     assert fakes[0].calls[-1] == ("moveto", 15.0, 0.0)
 
 
+def test_unreadable_nickname_reads_as_unknown(fake_ebb, monkeypatch):
+    def garbled(port, verbose=True):
+        raise UnicodeDecodeError("ascii", b"\xff", 0, 1, "not ascii")
+
+    monkeypatch.setattr(plotter_module.ebb_serial, "query_nickname", garbled)
+    plotter, _ = _connected()
+    assert plotter.read_identity() is None
+
+
+@pytest.mark.parametrize("percent", [-1, 81, 30.5, True])
+def test_pen_height_outside_the_safe_range_is_refused(percent):
+    plotter, _ = _connected()
+    with pytest.raises(ValueError):
+        plotter.set_pen_down_height(percent)
+
+
 def test_pen_height_updates_live_when_pen_is_down():
     plotter, fakes = _connected()
     plotter.pen_down()
@@ -3147,7 +3163,7 @@ run takes over (spec §6.1).
 from plotink import ebb_motion, ebb_serial
 
 from rosetta.engine.identity import Identity, decode_nickname, encode_nickname
-from rosetta.engine.options import PlotSettings, apply_settings, make_axidraw
+from rosetta.engine.options import PEN_DOWN_MAX, PlotSettings, apply_settings, make_axidraw
 from rosetta.models import get_model
 
 MIN_FIRMWARE_FOR_NICKNAME = "2.5.5"
@@ -3189,7 +3205,10 @@ class Plotter:
         return bool(ebb_motion.queryVoltage(self._port(), False))
 
     def read_identity(self) -> Identity | None:
-        nickname = ebb_serial.query_nickname(self._port(), False)
+        try:
+            nickname = ebb_serial.query_nickname(self._port(), False)
+        except (UnicodeDecodeError, OSError):  # a foreign, non-ASCII nickname or a flaky port
+            return None
         return decode_nickname(nickname) if nickname else None
 
     def write_identity(self, identity: Identity) -> bool:
@@ -3235,6 +3254,8 @@ class Plotter:
         self._pen_is_down = True
 
     def set_pen_down_height(self, percent: int) -> None:
+        if isinstance(percent, bool) or not isinstance(percent, int) or not 0 <= percent <= PEN_DOWN_MAX:
+            raise ValueError(f"Pen-down height must be a whole number from 0 to {PEN_DOWN_MAX}.")
         ad = self._require()
         self._settings.pen_down = percent
         ad.options.pen_pos_down = percent
@@ -3279,7 +3300,7 @@ class Plotter:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv\Scripts\python -m pytest tests\test_plotter.py -v`
-Expected: `11 passed`
+Expected: `16 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -3380,7 +3401,7 @@ from pathlib import Path
 
 from rosetta.compose import Material, PlacedPiece, Placement, compose_job, initial_placement
 from rosetta.engine.identity import Identity
-from rosetta.engine.options import PlotSettings
+from rosetta.engine.options import PEN_DOWN_MAX, PlotSettings
 from rosetta.engine.plotter import Plotter
 from rosetta.engine.runner import PlotOutcome, PlotRunner, estimate, set_resume_origin_home
 from rosetta.errors import ImportProblem
@@ -3551,8 +3572,8 @@ def cmd_plot(args) -> int:
     runner = PlotRunner()
     layers = meta["layers"]
     for index, layer in enumerate(layers, start=1):
-        input(f"Load the {layer['name']} pen ({index} of {len(layers)}), then press Enter. "
-              f"(Ctrl+C pauses.) ")
+        input(f"Load the {layer['name']} pen ({layer['color']}; {index} of {len(layers)}), "
+              f"then press Enter. (Ctrl+C pauses.) ")
         result = _run_with_pause(runner, svg, layer["layer"], settings)
         while result.outcome is not PlotOutcome.COMPLETED:
             if result.outcome is PlotOutcome.PAUSED:
@@ -3561,22 +3582,46 @@ def cmd_plot(args) -> int:
                     return 1
                 resume_svg = result.resume_svg
                 if choice == "h":
-                    resume_svg = runner.return_home(resume_svg, settings)
-                    input("The pen is Home. Press Enter to resume. ")
+                    home = runner.return_home(resume_svg, settings)
+                    print(home.message)
+                    resume_svg = home.resume_svg or resume_svg
+                    input("Press Enter to resume. ")
                 result = _run_with_pause(runner, resume_svg, layer["layer"], settings, resume=True)
             elif result.outcome is PlotOutcome.DISCONNECTED:
-                input("Plotter disconnected. Plug it back in, slide the pen Home, then press Enter. ")
+                input("Plotter disconnected. Plug the USB cable back in, then press Enter. ")
+                _release_motors(settings)
+                input(f"{HOME_INSTRUCTION} Then press Enter to resume. ")
                 resume_svg = set_resume_origin_home(result.resume_svg)
                 result = _run_with_pause(runner, resume_svg, layer["layer"], settings, resume=True)
             else:
                 print(result.message)
+                if result.details:
+                    print(f"  Details: {result.details}")
                 return 1
     print("Done! The pen is back Home.")
     return 0
 
 
+def _release_motors(settings: PlotSettings) -> None:
+    """After a USB loss the motors may still hold the carriage; switch them off so it slides."""
+    plotter = Plotter()
+    if plotter.connect(settings):
+        try:
+            plotter.motors_off()
+        finally:
+            plotter.disconnect()
+
+
+def _pen_height(text: str) -> int:
+    value = int(text)
+    if not 0 <= value <= PEN_DOWN_MAX:
+        raise argparse.ArgumentTypeError(f"pen-down height must be 0-{PEN_DOWN_MAX}")
+    return value
+
+
 def _add_pen_arguments(parser) -> None:
-    parser.add_argument("--pen-down", type=int, default=30, help="pen-down height, percent (0-100)")
+    parser.add_argument("--pen-down", type=_pen_height, default=30,
+                        help=f"pen-down height, percent (0-{PEN_DOWN_MAX})")
     parser.add_argument("--pen-type", choices=sorted(PEN_TYPES), default="fineliner")
     parser.add_argument("--penlift", type=int, choices=[1, 2, 3], default=1)
 
