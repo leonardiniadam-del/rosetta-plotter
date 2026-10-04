@@ -4,15 +4,15 @@
 
 **Goal:** Build Rosetta Plotter's headless core and a `rosetta-plot` command-line tool. The core imports SVG/PDF/AI artwork, places it on paper, writes an EMS-ready plot file, and estimates, traces, pauses, resumes, and plots it on a real AxiDraw.
 
-**Architecture:** The pure-Python modules under `src/rosetta/` do the "translator" work from the spec (§6.2): normalize, inline CSS, flatten via the EMS digest parser, place, clip, and group by color. `src/rosetta/engine/` wraps the unmodified EMS `pyaxidraw` 3.9.6 API for plotting, previews, and interactive moves. Everything is in millimetres in the machine frame (spec §4). The CLI is a thin layer over these modules, and the Plan 2 UI will call the same functions.
+**Architecture:** The pure-Python modules under `src/rosetta/` do the "translator" work from the spec (Â§6.2): normalize, inline CSS, flatten via the EMS digest parser, place, clip, and group by color. `src/rosetta/engine/` wraps the unmodified EMS `pyaxidraw` 3.9.6 API for plotting, previews, and interactive moves. Everything is in millimetres in the machine frame (spec Â§4). The CLI is a thin layer over these modules, and the Plan 2 UI will call the same functions.
 
 **Tech Stack:** Python 3.12 at `C:\Users\leona\AppData\Local\Programs\Python\Python312\python.exe` (this machine's `py -3.12` launcher entry is stale), with the EMS-tested engine dependencies pinned in `constraints.txt`. Also EMS AxiDraw API 3.9.6 (`pyaxidraw`, `axidrawinternal`, `plotink`, `ink_extensions`), lxml, tinycss2, PyMuPDF, pytest. Windows PowerShell commands.
 
 **Spec:** `docs/superpowers/specs/2026-10-03-rosetta-plotter-design.md`
 
 **Later plans:**
-- **Plan 2:** the student-facing pywebview/WebView2 app (§5, §6.4, §6.5).
-- **Plan 3:** packaging, installer, Quick Start, and GitHub release (§2, §11.5).
+- **Plan 2:** the student-facing pywebview/WebView2 app (Â§5, Â§6.4, Â§6.5).
+- **Plan 3:** packaging, installer, Quick Start, and GitHub release (Â§2, Â§11.5).
 
 Both get written after this plan is done.
 
@@ -32,18 +32,18 @@ Both get written after this plan is done.
 | `src/rosetta/__init__.py` | Version string |
 | `src/rosetta/errors.py` | `ImportProblem`, whose message is shown to students as-is |
 | `src/rosetta/units.py` | Parse SVG lengths, convert to mm |
-| `src/rosetta/colors.py` | SVG paint → `#rrggbb` pen color; everyday color names |
+| `src/rosetta/colors.py` | SVG paint â†’ `#rrggbb` pen color; everyday color names |
 | `src/rosetta/models.py` | AxiDraw model travel table; pen types |
 | `src/rosetta/svgdoc.py` | Parse SVG, detect the source app, normalize page size/viewBox, inline CSS |
-| `src/rosetta/flatten.py` | Normalized SVG → `Shape`s (polylines in mm, color, stroked/filled) via EMS digest |
-| `src/rosetta/issues.py` | Problem checker (spec §6.3) |
-| `src/rosetta/pdf_import.py` | PDF / PDF-compatible AI page → SVG text via PyMuPDF |
+| `src/rosetta/flatten.py` | Normalized SVG â†’ `Shape`s (polylines in mm, color, stroked/filled) via EMS digest |
+| `src/rosetta/issues.py` | Problem checker (spec Â§6.3) |
+| `src/rosetta/pdf_import.py` | PDF / PDF-compatible AI page â†’ SVG text via PyMuPDF |
 | `src/rosetta/loader.py` | `load_artwork(path)`: dispatch by extension, run checks, return `Artwork` |
 | `src/rosetta/geometry.py` | Rotation/scale/translate, bbox, rect intersect, polyline clipping |
 | `src/rosetta/compose.py` | Material, Placement, `compose_job`, `initial_placement` |
 | `src/rosetta/plotsvg.py` | Write the plot-ready SVG (one layer per pen color) |
 | `src/rosetta/engine/options.py` | `PlotSettings`, `apply_settings`, `make_axidraw` |
-| `src/rosetta/engine/identity.py` | Model stored in the plotter nickname (spec §8) |
+| `src/rosetta/engine/identity.py` | Model stored in the plotter nickname (spec Â§8) |
 | `src/rosetta/engine/awake.py` | Keep Windows awake during plots |
 | `src/rosetta/engine/runner.py` | Estimates, plot runs with progress, pause/resume |
 | `src/rosetta/engine/plotter.py` | Interactive control: connect, home, jog, pen height, trace, identity |
@@ -66,9 +66,9 @@ git init
 git config user.name
 git config user.email
 ```
-Expected: `Initialized empty Git repository…`, followed by a name and an email.
+Expected: `Initialized empty Git repositoryâ€¦`, followed by a name and an email.
 - If either prints nothing, stop and ask Adam for the name and email to use.
-- Then set them with `git config user.name "…"` and `git config user.email "…"`.
+- Then set them with `git config user.name "â€¦"` and `git config user.email "â€¦"`.
 
 - [ ] **Step 2: Create `.gitignore`**
 
@@ -260,7 +260,7 @@ def test_helpers_used_by_plotter_and_flatten():
 
 Run: `.venv\Scripts\python -m pytest tests\test_engine_contract.py -v`
 Expected: `4 passed`.
-- If only `test_engine_version_is_pinned` fails because the version is newer and the other two pass, the newer engine is compatible. Change the expected string to the installed version and update the version in spec §3.
+- If only `test_engine_version_is_pinned` fails because the version is newer and the other two pass, the newer engine is compatible. Change the expected string to the installed version and update the version in spec Â§3.
 - If either of the other two fails, stop. Report the missing name to Adam before going further.
 
 - [ ] **Step 3: Commit**
@@ -1082,6 +1082,12 @@ git add src\rosetta\svgdoc.py tests\test_inline_css.py
 git commit -m "feat: inline CSS rules so Illustrator class colors reach the EMS parser" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
+> **Review follow-up (applied during execution, commit `c2349d2`):**
+> - **Source detection.** `detect_source` now checks the Affinity and Inkscape namespaces first. After that it looks for Illustrator's markers: the generator comment, `data-name`, or a `.cls-N` rule inside `<style>`.
+> - **Sizes.** An SVG with only a viewBox and no app fingerprint is read as points (`VIEWBOX_ONLY_PX_PER_INCH = 72`), because that's Illustrator's Responsive export with minimal IDs. If only one dimension is given, the other comes from the viewBox's aspect ratio. A NaN, infinite, or negative size raises `ImportProblem`, and an unknown `source_hint` raises `ValueError`.
+> - **Styles.** `inline_css` now rewrites every style down to the properties EMS reads (`EMS_STYLE_PROPERTIES`), parsed with tinycss2. Values containing `;` or `:` are dropped, because they crash EMS's style parser.
+> - **Tests.** Added tests for each of these, plus the old Illustrator DOCTYPE-entity format.
+
 ---
 
 ### Task 8: Flatten through the EMS digest parser
@@ -1156,6 +1162,19 @@ def test_invisible_shapes_dropped_and_default_fill_is_black():
     assert isinstance(shapes[0], Shape)
     assert shapes[0].color == "#000000"
     assert (shapes[0].stroked, shapes[0].filled) == (False, True)
+
+
+def test_parser_failure_becomes_import_problem(monkeypatch):
+    from axidrawinternal import digest_svg
+
+    from rosetta.errors import ImportProblem
+
+    def broken(*args, **kwargs):
+        raise ValueError("unexpected input")
+
+    monkeypatch.setattr(digest_svg.DigestSVG, "process_svg", broken)
+    with pytest.raises(ImportProblem, match="couldn't be read"):
+        flatten(normalize(samples.GENERIC_PX))
 ```
 
 This test uses a tiny test helper. Create `src/rosetta/geometry_testing.py`:
@@ -1190,6 +1209,7 @@ from ink_extensions import simpletransform
 from plotink import plot_utils
 
 from rosetta.colors import resolve_paint
+from rosetta.errors import ImportProblem
 from rosetta.svgdoc import NormalizedSvg
 from rosetta.units import MM_PER_INCH
 
@@ -1220,12 +1240,17 @@ def flatten(doc: NormalizedSvg) -> list[Shape]:
         f"scale({s_x:.6E},{s_y:.6E}) translate({o_x:.6E},{o_y:.6E})"
     )
     digester = digest_svg.DigestSVG(default_logging=False)
-    digest = digester.process_svg(
-        root,
-        plot_warnings.PlotWarnings(),
-        [width_in, height_in, s_x, s_y, -2, CURVE_TOLERANCE_IN],
-        transform,
-    )
+    try:
+        digest = digester.process_svg(
+            root,
+            plot_warnings.PlotWarnings(),
+            [width_in, height_in, s_x, s_y, -2, CURVE_TOLERANCE_IN],
+            transform,
+        )
+    except Exception as exc:  # EMS's parser raises many types on odd input; the student needs a message
+        raise ImportProblem(
+            "Part of this file couldn't be read. Try exporting it again as SVG or PDF."
+        ) from exc
 
     shapes = []
     for layer in digest.layers:
@@ -1250,7 +1275,7 @@ def flatten(doc: NormalizedSvg) -> list[Shape]:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv\Scripts\python -m pytest tests\test_flatten.py -v`
-Expected: `6 passed`
+Expected: `7 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -1501,7 +1526,7 @@ from rosetta.errors import ImportProblem
 
 AI_NOT_PDF = (
     "This Illustrator file was saved without PDF compatibility. In Illustrator, use "
-    "File › Save As and check “Create PDF Compatible File”, or export an SVG instead."
+    "File â€º Save As and check â€œCreate PDF Compatible Fileâ€, or export an SVG instead."
 )
 
 
@@ -1603,7 +1628,7 @@ def test_loads_pdf_with_text_issue(tmp_path):
 def test_affinity_native_file_is_explained(tmp_path):
     path = tmp_path / "drawing.afdesign"
     path.write_bytes(b"not really")
-    with pytest.raises(ImportProblem, match="File › Export"):
+    with pytest.raises(ImportProblem, match="File â€º Export"):
         load_artwork(path)
 
 
@@ -1664,7 +1689,7 @@ def load_artwork(path: Path, page: int = 0) -> Artwork:
     extension = path.suffix.lower()
     if extension in AFFINITY_EXTENSIONS:
         raise ImportProblem(
-            "Affinity files can't be opened directly. In Affinity, use File › Export › "
+            "Affinity files can't be opened directly. In Affinity, use File â€º Export â€º "
             "SVG or PDF, then import that file."
         )
     if extension not in SUPPORTED_EXTENSIONS:
@@ -1777,7 +1802,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'rosetta.geometry'`
 """Pure geometry in millimetres.
 
 Rect = (x0, y0, x1, y1) with x0 <= x1 and y0 <= y1. y grows downward on screen, which is
-toward the student on the machine (spec §4). Rotation is clockwise as seen on screen.
+toward the student on the machine (spec Â§4). Rotation is clockwise as seen on screen.
 """
 Point = tuple[float, float]
 Rect = tuple[float, float, float, float]
@@ -1909,7 +1934,7 @@ _SAME = 1e-9
 
 
 def _clip_segment(start: Point, end: Point, rect: Rect) -> tuple[Point, Point] | None:
-    """Liang–Barsky: the part of segment start->end inside rect, or None."""
+    """Liangâ€“Barsky: the part of segment start->end inside rect, or None."""
     x0, y0 = start
     dx, dy = end[0] - x0, end[1] - y0
     t_enter, t_exit = 0.0, 1.0
@@ -2176,7 +2201,7 @@ def compose_job(
 def initial_placement(
     artwork: Artwork, material: Material, margin: float = DEFAULT_MARGIN_MM
 ) -> Placement:
-    """Where a newly imported piece lands (spec §5, step 3).
+    """Where a newly imported piece lands (spec Â§5, step 3).
 
     Artwork drawn at the paper's size lands exactly on the paper. Anything else is
     centered and shrunk, never enlarged, to fit inside the margins.
@@ -2265,7 +2290,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'rosetta.plotsvg'`
 
 `src/rosetta/plotsvg.py`:
 ```python
-"""Write the plot-ready SVG the EMS engine plots (spec §6.2 step 8).
+"""Write the plot-ready SVG the EMS engine plots (spec Â§6.2 step 8).
 
 Page = the machine's reachable area in mm, so SVG coordinates are machine coordinates.
 One Inkscape layer per pen color, numbered from 1, so each color plots as its own
@@ -2420,7 +2445,7 @@ def apply_settings(ad, settings: PlotSettings) -> None:
     options.pen_pos_up = settings.pen_up
     options.speed_pendown = PEN_TYPES[settings.pen_type].speed_pendown
     options.speed_penup = PEN_UP_SPEED
-    options.auto_rotate = False  # spec §4: never rotate; screen = paper
+    options.auto_rotate = False  # spec Â§4: never rotate; screen = paper
     options.reordering = settings.reordering
     options.hiding = settings.hiding
 
@@ -2434,7 +2459,7 @@ def make_axidraw():
 
 `src/rosetta/engine/identity.py`:
 ```python
-"""The plotter's model, stored in its EBB nickname so every laptop recognizes it (spec §8)."""
+"""The plotter's model, stored in its EBB nickname so every laptop recognizes it (spec Â§8)."""
 import re
 from dataclasses import dataclass
 
@@ -2983,7 +3008,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'rosetta.engine.plotte
 
 Uses the EMS interactive context. EMS assumes the pen is at Home (0, 0) when connect()
 succeeds, so set_home() reconnects, and release_for_plot() returns Home before a plot
-run takes over (spec §6.1).
+run takes over (spec Â§6.1).
 """
 from plotink import ebb_motion, ebb_serial
 
@@ -3482,7 +3507,7 @@ git commit -m "feat: rosetta-plot CLI for hardware testing" -m "Co-Authored-By: 
 
 ### Task 20: Real exports from Illustrator 2026 and Affinity 3.3 (needs Adam)
 
-This checks the size rules in `svgdoc.py` against real files instead of hand-written samples (spec §11.2).
+This checks the size rules in `svgdoc.py` against real files instead of hand-written samples (spec Â§11.2).
 
 **Files:**
 - Create: `tests/files/real/*` (exported by Adam), `tests/files/real/manifest.json`, `tests/test_real_exports.py`
@@ -3491,7 +3516,7 @@ This checks the size rules in `svgdoc.py` against real files instead of hand-wri
 - [ ] **Step 1: Adam makes the Illustrator files**
 
 In Illustrator 2026:
-1. **New document:** File › New, 200 mm × 100 mm, Units: Millimeters, **Color Mode: RGB**.
+1. **New document:** File â€º New, 200 mm Ã— 100 mm, Units: Millimeters, **Color Mode: RGB**.
 2. **Red square:**
    - Draw a rectangle.
    - In the Transform panel, set the reference point to top-left, then X 0, Y 0, W 100, H 100.
@@ -3505,12 +3530,12 @@ In Illustrator 2026:
 
    | File | How to export |
    |---|---|
-   | `ai_default.svg` | File › Export › Export As › SVG with the default options |
+   | `ai_default.svg` | File â€º Export â€º Export As â€º SVG with the default options |
    | `ai_presentation.svg` | Export again, Styling: **Presentation Attributes** |
-   | `ai_saved.pdf` | File › Save a Copy › Adobe PDF, default preset |
-   | `ai_pdfcompat.ai` | File › Save As › .ai with "Create PDF Compatible File" checked (the default) |
+   | `ai_saved.pdf` | File â€º Save a Copy â€º Adobe PDF, default preset |
+   | `ai_pdfcompat.ai` | File â€º Save As â€º .ai with "Create PDF Compatible File" checked (the default) |
 
-6. **Second document:** File › New › Print › Letter, **Units: Points**, Color Mode RGB.
+6. **Second document:** File â€º New â€º Print â€º Letter, **Units: Points**, Color Mode RGB.
    - Draw a rectangle with the top-left reference at X 72, Y 72, W 72, H 72.
    - Stroke #FF0000, fill None.
    - Export As SVG with defaults to `ai_points.svg`.
@@ -3518,7 +3543,7 @@ In Illustrator 2026:
 - [ ] **Step 2: Adam makes the Affinity files**
 
 In Affinity by Canva 3.3:
-1. **New document:** 200 mm × 100 mm, RGB.
+1. **New document:** 200 mm Ã— 100 mm, RGB.
 2. **Red square:**
    - Draw a rectangle.
    - In the Transform panel, set the anchor to top-left, then X 0, Y 0, W 100, H 100.
@@ -3528,8 +3553,8 @@ In Affinity by Canva 3.3:
 
    | File | How to export |
    |---|---|
-   | `affinity_default.svg` | File › Export › SVG, default preset |
-   | `affinity.pdf` | File › Export › PDF, default preset |
+   | `affinity_default.svg` | File â€º Export â€º SVG, default preset |
+   | `affinity.pdf` | File â€º Export â€º PDF, default preset |
 
 - [ ] **Step 3: Write the manifest**
 
@@ -3584,13 +3609,13 @@ Expected: `7 passed`. If something fails, fix it this way:
 
 - **`affinity_default.svg` is the wrong size.**
   - Divide the expected 200 by the measured width.
-  - Set `AFFINITY_PX_PER_INCH` in `src/rosetta/svgdoc.py` to 96 divided by that ratio. For example, measured 266.67 → ratio 0.75 → set it to 72.0.
+  - Set `AFFINITY_PX_PER_INCH` in `src/rosetta/svgdoc.py` to 96 divided by that ratio. For example, measured 266.67 â†’ ratio 0.75 â†’ set it to 72.0.
   - Update `AFFINITY_EXPORT` in `tests/samples.py` so its viewBox matches the new value. For 72: `viewBox="0 0 283.4646 141.7323"` with the path `M28.3465,28.3465L283.4646,28.3465`.
   - Rerun the full suite.
 - **An Illustrator SVG is detected as `svg` instead of `illustrator`** (the size comes out at 133%). Add the fingerprint that file actually contains to `detect_source`, add a matching sample, and rerun.
 - **The issue codes differ** (for example, Affinity exported text as curves). Change the manifest only if the file is right and the expectation was wrong. Note why in the commit message.
 
-Record any rule change as a one-line note in spec §6.2 under "Percent sizes".
+Record any rule change as a one-line note in spec Â§6.2 under "Percent sizes".
 
 - [ ] **Step 6: Commit**
 
@@ -3603,7 +3628,7 @@ git commit -m "test: verify sizing against real Illustrator 2026 and Affinity 3.
 
 ### Task 21: First real plots on the lab's large AxiDraw (needs Adam and the plotter)
 
-This is the spec §11.4 checklist, run through the CLI. Record the results in `docs/hardware-log.md`.
+This is the spec Â§11.4 checklist, run through the CLI. Record the results in `docs/hardware-log.md`.
 
 **Files:**
 - Create: `docs/hardware-log.md`, `out/` job files (git-ignored)
@@ -3615,7 +3640,7 @@ Plug in USB and power, then run:
 .venv\Scripts\rosetta-plot info
 ```
 Expected: firmware, `Power adapter: OK`, and `Model: unknown`.
-- Find the model with spec §12: read the label, or measure the travel. SE/A1 is model 5, SE/A2 model 6, V3 XLX model 3.
+- Find the model with spec Â§12: read the label, or measure the travel. SE/A1 is model 5, SE/A2 model 6, V3 XLX model 3.
 - Then run `.venv\Scripts\rosetta-plot identify --model N --label "PSU Lab"`.
 - Run `info` again. Expected: the model name.
 
@@ -3650,8 +3675,8 @@ Expected: `2 pen colors` (red, then black), plus a time per layer.
 - [ ] **Step 4: Measure and log**
 
 With a ruler:
-- the square's left and top edges should be 20 mm from the paper edges (±1 mm);
-- each side should be 100 mm (±1 mm);
+- the square's left and top edges should be 20 mm from the paper edges (Â±1 mm);
+- each side should be 100 mm (Â±1 mm);
 - the black line should sit 140 mm from the top edge.
 
 Then test unplugging:
