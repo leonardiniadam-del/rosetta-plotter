@@ -31,3 +31,19 @@ def test_length_to_mm_unsupported_returns_none():
     assert length_to_mm("50%", 96) is None
     assert length_to_mm("3em", 96) is None
     assert length_to_mm(None, 96) is None
+
+
+@pytest.mark.parametrize(
+    "text, px_per_inch, expected",
+    [
+        ("215.9mm", 96, 215.9), ("8.5IN", 96, 215.9), ("1.5e2pt", 96, 52.916667),
+        (" 300 ", 96, 79.375), ("-5mm", 96, -5.0), ("10q", 96, 2.5),
+    ],
+)
+def test_length_to_mm_table(text, px_per_inch, expected):
+    assert length_to_mm(text, px_per_inch) == pytest.approx(expected)
+
+
+def test_parse_length_rejects_non_ascii_digits_and_infinity():
+    assert parse_length("١٢") == (None, "")
+    assert parse_length("1e400") == (None, "")

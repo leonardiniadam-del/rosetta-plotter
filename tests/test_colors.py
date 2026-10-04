@@ -1,3 +1,5 @@
+import pytest
+
 from rosetta.colors import BLACK, WHITE, color_name, resolve_paint
 
 
@@ -24,8 +26,32 @@ def test_resolve_paint_unknown_paints_count_as_black():
     assert resolve_paint("currentColor", default=None) == BLACK
 
 
-def test_color_name_finds_nearest_everyday_name():
-    assert color_name("#e30613") == "red"
-    assert color_name("#000000") == "black"
-    assert color_name("#0000ff") == "blue"
-    assert color_name("#7f7f7f") == "gray"
+def test_resolve_paint_clamps_out_of_range_channels():
+    assert resolve_paint("rgb(300,0,0)", default=None) == "#ff0000"
+    assert resolve_paint("rgb(-5,0,0)", default=None) == "#000000"
+
+
+def test_resolve_paint_blank_and_case():
+    assert resolve_paint("  ", default=None) is None
+    assert resolve_paint("NONE", default=None) is None
+
+
+def test_resolve_paint_css_wide_keywords_use_default():
+    assert resolve_paint("inherit", default=None) is None
+    assert resolve_paint("Inherit !important", default=None) is None
+    assert resolve_paint("initial", default="black") == BLACK
+
+
+@pytest.mark.parametrize(
+    "hex_color, name",
+    [
+        ("#e30613", "red"), ("#8b0000", "red"), ("#000000", "black"), ("#0000ff", "blue"),
+        ("#1b1464", "blue"), ("#7f7f7f", "gray"), ("#404040", "gray"), ("#c0c0c0", "gray"),
+        ("#ffffff", "white"), ("#f5f5f5", "white"), ("#39b54a", "green"), ("#8dc63f", "green"),
+        ("#ec008c", "magenta"), ("#a67c52", "brown"), ("#c69c6d", "brown"), ("#8b4513", "brown"),
+        ("#ffa500", "orange"), ("#ffff00", "yellow"), ("#ffc0cb", "pink"), ("#ff69b4", "pink"),
+        ("#800080", "purple"), ("#00ffff", "cyan"),
+    ],
+)
+def test_color_name_by_hue(hex_color, name):
+    assert color_name(hex_color) == name

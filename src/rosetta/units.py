@@ -1,4 +1,5 @@
 """Length parsing and conversion. Everything inside Rosetta Plotter is millimetres."""
+import math
 import re
 
 MM_PER_INCH = 25.4
@@ -12,7 +13,7 @@ _ABSOLUTE_MM = {
     "q": 0.25,
 }
 
-_LENGTH = re.compile(r"\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*([a-zA-Z%]*)\s*")
+_LENGTH = re.compile(r"\s*([+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)\s*([a-zA-Z%]*)\s*")
 
 
 def parse_length(text: str | None) -> tuple[float | None, str]:
@@ -22,7 +23,10 @@ def parse_length(text: str | None) -> tuple[float | None, str]:
     match = _LENGTH.fullmatch(text)
     if not match:
         return None, ""
-    return float(match.group(1)), match.group(2).lower()
+    value = float(match.group(1))
+    if not math.isfinite(value):
+        return None, ""
+    return value, match.group(2).lower()
 
 
 def length_to_mm(text: str | None, px_per_inch: float) -> float | None:
