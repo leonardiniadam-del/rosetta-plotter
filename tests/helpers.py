@@ -1,4 +1,4 @@
-"""Small helpers shared by tests (kept in the package so tests import one place)."""
+"""Small helpers shared by tests."""
 
 
 def shapes_bbox(shapes) -> tuple[float, float, float, float]:

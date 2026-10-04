@@ -106,6 +106,8 @@ def normalize(raw: bytes, source_hint: str | None = None) -> NormalizedSvg:
     root.set("height", f"{height_mm:.6f}mm")
     root.set("viewBox", " ".join(f"{value:.6f}" for value in viewbox))
     inline_css(root)
+    _support_plain_href(root)
+    _wrap_root_paint(root)
     return NormalizedSvg(root, width_mm, height_mm, source)
 
 
@@ -140,6 +142,7 @@ _SIMPLE_SELECTOR = re.compile(r"^(?P<tag>[A-Za-z][\w-]*)?(?P<rest>(?:[.#][\w-]+)
 EMS_STYLE_PROPERTIES = ("fill", "stroke", "fill-rule", "visibility", "display")
 # Kept so the problem checker can still see masks set through CSS; EMS ignores them.
 CHECKED_STYLE_PROPERTIES = ("clip-path", "mask")
+_KEPT_STYLE_PROPERTIES = EMS_STYLE_PROPERTIES + CHECKED_STYLE_PROPERTIES
 
 
 def inline_css(root: etree._Element) -> None:
@@ -182,7 +185,7 @@ def inline_css(root: etree._Element) -> None:
         kept = {
             key: value
             for key, value in merged.items()
-            if key in EMS_STYLE_PROPERTIES + CHECKED_STYLE_PROPERTIES
+            if key in _KEPT_STYLE_PROPERTIES
             and ";" not in value
             and ":" not in value
         }
@@ -190,6 +193,29 @@ def inline_css(root: etree._Element) -> None:
             element.set("style", ";".join(f"{key}:{value}" for key, value in kept.items()))
         elif own_style is not None:
             del element.attrib["style"]
+
+
+XLINK_NS = "http://www.w3.org/1999/xlink"
+_ROOT_PAINT_ATTRIBUTES = ("fill", "stroke", "fill-rule", "visibility", "display", "style")
+
+
+def _support_plain_href(root: etree._Element) -> None:
+    """EMS follows only xlink:href on <use>; newer exporters write plain href."""
+    for use in root.iter(f"{{{SVG_NS}}}use", "use"):
+        if use.get(f"{{{XLINK_NS}}}href") is None and use.get("href") is not None:
+            use.set(f"{{{XLINK_NS}}}href", use.get("href"))
+
+
+def _wrap_root_paint(root: etree._Element) -> None:
+    """EMS ignores paint set on the <svg> element itself (icons often put fill/stroke there),
+    so move it onto a group that holds all of the root's content."""
+    moved = {name: root.attrib.pop(name) for name in _ROOT_PAINT_ATTRIBUTES if name in root.attrib}
+    if not moved:
+        return
+    group = etree.Element(f"{{{SVG_NS}}}g", moved)
+    for child in list(root):
+        group.append(child)
+    root.append(group)
 
 
 def _declarations(source) -> dict[str, str]:

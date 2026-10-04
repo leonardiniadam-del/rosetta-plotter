@@ -42,17 +42,24 @@ def resolve_paint(value: str | None, default: str | None) -> str | None:
     )
 
 
+def is_white(hex_color: str) -> bool:
+    """Near-white (every channel at least 0xF0): treated as background and skipped by default."""
+    return all(int(hex_color[i:i + 2], 16) >= 0xF0 for i in (1, 3, 5))
+
+
 def color_name(hex_color: str) -> str:
     """Everyday name for a '#rrggbb' color, for prompts like 'Load the red pen'.
 
     Classifies by hue first, then splits off black/gray/white, brown, pink, and purple.
     """
+    if is_white(hex_color):
+        return "white"
     red, green, blue = (int(hex_color[i:i + 2], 16) / 255 for i in (1, 3, 5))
     hue, saturation, value = colorsys.rgb_to_hsv(red, green, blue)
     if value <= 0.15:
         return "black"
     if saturation < 0.18:
-        return "white" if value >= 0.9 else "gray"
+        return "gray"
     degrees = hue * 360
     name = next(label for limit, label in _HUE_SECTORS if degrees < limit)
     if 15 <= degrees < 70 and (value < 0.7 or (saturation < 0.6 and value < 0.8)):

@@ -1,6 +1,6 @@
 import pytest
 
-from rosetta.colors import BLACK, WHITE, color_name, resolve_paint
+from rosetta.colors import BLACK, WHITE, color_name, is_white, resolve_paint
 
 
 def test_resolve_paint_normalizes_to_hex():
@@ -55,3 +55,8 @@ def test_resolve_paint_css_wide_keywords_use_default():
 )
 def test_color_name_by_hue(hex_color, name):
     assert color_name(hex_color) == name
+
+
+def test_near_white_rule_is_shared():
+    assert color_name("#e6e6e6") == "gray"
+    assert is_white("#fefefe") and is_white("#f5f5f5") and not is_white("#e6e6e6")
