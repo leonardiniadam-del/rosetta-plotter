@@ -137,3 +137,27 @@ def test_pdf_with_a_clipping_mask_gets_a_clip_issue(tmp_path):
     doc.close()
     art = load_artwork(path)
     assert "clip" in {issue.code for issue in art.issues}
+
+
+def test_pdf_content_outside_the_page_is_not_drawn(tmp_path):
+    path = tmp_path / "overhang.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page(width=100, height=100)
+    page.draw_rect(pymupdf.Rect(-50, 10, 50, 50), color=(0, 0, 0))  # half off the left edge
+    page.draw_line((-100, -100), (-50, -50), color=(1, 0, 0))  # entirely off the page
+    doc.save(path)
+    doc.close()
+    art = load_artwork(path)
+    xs = [x for shape in art.shapes for line in shape.polylines for x, _ in line]
+    assert min(xs) == pytest.approx(0.0, abs=0.01)
+    assert {shape.color for shape in art.shapes} == {"#000000"}
+
+
+def test_svg_content_outside_the_artboard_is_kept(tmp_path):
+    path = tmp_path / "overhang.svg"
+    path.write_bytes(
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10">'
+        b'<line x1="-5" y1="5" x2="5" y2="5" stroke="black"/></svg>'
+    )
+    xs = [x for shape in load_artwork(path).shapes for line in shape.polylines for x, _ in line]
+    assert min(xs) == pytest.approx(-5.0)

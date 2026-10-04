@@ -1,9 +1,10 @@
 """Open an artwork file (SVG, PDF, or PDF-compatible AI) and turn it into plottable shapes."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from rosetta.errors import ImportProblem
 from rosetta.flatten import Shape, flatten_with_report
+from rosetta.geometry import clip_polyline
 from rosetta.issues import (
     MESSAGES,
     Issue,
@@ -55,6 +56,8 @@ def load_artwork(path: Path, page: int = 0) -> Artwork:
 
     report = flatten_with_report(doc)
     shapes = report.shapes
+    if doc.source == "pdf":
+        shapes = _clip_to_page(shapes, doc.width_mm, doc.height_mm)
     issues = (
         scan_document(doc.root, doc.source)
         + scan_skipped(report.skipped)
@@ -66,6 +69,19 @@ def load_artwork(path: Path, page: int = 0) -> Artwork:
         explained = [issue.message for issue in issues if issue.code in _SKIPPED_CODES]
         raise ImportProblem(" ".join(explained) if explained else blocking[0].message)
     return Artwork(name, doc.width_mm, doc.height_mm, shapes, issues, doc.source)
+
+
+def _clip_to_page(shapes: list[Shape], width_mm: float, height_mm: float) -> list[Shape]:
+    """A PDF hides anything outside its page box; drop it so it isn't drawn either."""
+    page = (0.0, 0.0, width_mm, height_mm)
+    kept = []
+    for shape in shapes:
+        polylines = tuple(
+            tuple(run) for line in shape.polylines for run in clip_polyline(line, page)
+        )
+        if polylines:
+            kept.append(replace(shape, polylines=polylines))
+    return kept
 
 
 def _read_svg(path: Path):
