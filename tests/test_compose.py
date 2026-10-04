@@ -104,3 +104,67 @@ def test_initial_placement_small_art_keeps_size_and_centers():
 
 def test_color_group_defaults():
     assert ColorGroup("#0000ff").polylines == []
+    assert ColorGroup("#000000").polylines is not ColorGroup("#000000").polylines
+
+
+def test_rotated_pieces_land_exactly():
+    # A 20 x 10 piece with a mark at its top-right corner (20, 0).
+    art = _art(20, 10, [_line("#000000", (20, 0), (20, 5))])
+    paper = Material(0, 0, 100, 100)
+    at_90 = compose_job(A4_MACHINE, paper, [PlacedPiece(art, Placement(x=10, y=10, rotation=90))])
+    # Clockwise 90: the rotated box is 10 x 20; top-right (20, 0) -> (10, 20), (20, 5) -> (5, 20).
+    assert at_90.groups[0].polylines[0] == pytest.approx([(20, 30), (15, 30)])
+    at_270 = compose_job(A4_MACHINE, paper, [PlacedPiece(art, Placement(x=10, y=10, rotation=270))])
+    # 270: (20, 0) -> (0, 0), (20, 5) -> (5, 0).
+    assert at_270.groups[0].polylines[0] == pytest.approx([(10, 10), (15, 10)])
+
+
+def test_nothing_lands_on_the_far_y_edge_of_the_reach():
+    art = _art(10, 400, [_line("#000000", (5, 0), (5, 400))])
+    job = compose_job(A4_MACHINE, Material(0, 0, 300, 400), [PlacedPiece(art, Placement())])
+    _, travel_y = A4_MACHINE.travel_mm
+    far_y = max(y for line in job.groups[0].polylines for _, y in line)
+    assert far_y == pytest.approx(travel_y - REACH_EDGE_INSET_MM)
+
+
+def test_paper_entirely_outside_the_reach_draws_nothing():
+    art = _art(10, 10, [_line("#000000", (0, 0), (10, 0))])
+    job = compose_job(A4_MACHINE, Material(400, 0, 50, 50), [PlacedPiece(art, Placement())])
+    assert job.groups == [] and job.ink_bbox is None and job.clipped is True
+
+
+def test_a3_paper_on_the_a3_plotter_is_not_reported_as_clipped():
+    a3_machine = get_model(2)  # reaches 296.926 mm in y; A3 paper is 297 mm
+    art = _art(420, 297, [_line("#000000", (0, 297), (420, 297)), _line("#000000", (0, 0), (420, 0))])
+    paper = Material(0, 0, 420, 297)
+    job = compose_job(a3_machine, paper, [PlacedPiece(art, initial_placement(art, paper))])
+    assert job.clipped is False
+
+
+def test_portrait_art_respects_the_vertical_margin():
+    placement = initial_placement(_art(100, 400, []), Material(0, 0, 200, 200))
+    usable = 200 - 2 * DEFAULT_MARGIN_MM
+    assert placement.scale == pytest.approx(usable / 400)
+    assert placement.y == pytest.approx(DEFAULT_MARGIN_MM)
+
+
+@pytest.mark.parametrize("rotation", [45, "90"])
+def test_bad_rotations_are_rejected_even_for_empty_pieces(rotation):
+    with pytest.raises(ValueError):
+        compose_job(A4_MACHINE, Material(0, 0, 50, 50), [PlacedPiece(_art(10, 10, []), Placement(rotation=rotation))])
+
+
+@pytest.mark.parametrize(
+    "paper",
+    [Material(0, 0, 0, 100), Material(0, 0, -5, 100), Material(0, 0, float("nan"), 100), Material(float("inf"), 0, 100, 100)],
+)
+def test_bad_paper_is_rejected(paper):
+    with pytest.raises(ValueError):
+        compose_job(A4_MACHINE, paper, [])
+
+
+def test_placement_is_immutable():
+    import dataclasses
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        Placement().x = 5

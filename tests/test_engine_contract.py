@@ -110,3 +110,26 @@ def test_pause_receiver_can_be_redirected():
     ad.set_up_pause_receiver = lambda _ems_event: install_receiver(event)
     ad.plot_run()
     assert ad.plot_status.stopped == 103
+
+
+def test_layers_mode_plots_exactly_the_requested_layer():
+    # Rosetta numbers one layer per pen color; layer 1 must not also plot layers 10-19.
+    from rosetta.compose import ColorGroup
+    from rosetta.models import get_model
+    from rosetta.plotsvg import plot_svg
+
+    groups = [ColorGroup("#000000", [[(10.0, 10.0 + n), (10.0 + 5 * n, 10.0 + n)]]) for n in range(1, 13)]
+    svg = plot_svg(get_model(1), groups)
+    for layer in (1, 10, 12):
+        ad = axidraw.AxiDraw()
+        ad.plot_setup(svg)
+        ad.options.mode = "layers"
+        ad.options.layer = layer
+        ad.options.preview = True
+        ad.options.rendering = 0
+        ad.options.auto_rotate = False
+        ad.options.reordering = 4
+        ad.plot_run()
+        stats = ad.plot_status.stats
+        drawn_mm = max(stats.down_travel_tot, stats.down_travel_inch) * 25.4
+        assert drawn_mm == pytest.approx(5 * layer, abs=0.01)
