@@ -270,6 +270,13 @@ git add tests\test_engine_contract.py
 git commit -m "test: pin EMS engine internals used by Rosetta" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
+> **Review follow-up (applied during execution):** three tests were added, bringing the contract test to 7.
+> - `test_call_shapes_used_by_rosetta` binds each EMS call's signature.
+> - `test_preview_statistics_units` checks inches and ms on a 100 mm preview.
+> - `test_pause_receiver_can_be_redirected`: pyaxidraw's `plot_run()` replaces any pause receiver set beforehand, so Task 17's runner redirects that call to its own event.
+>
+> The version test also asserts `axidrawinternal` 3.9.6.
+
 ---
 
 ### Task 3: Units
@@ -2618,8 +2625,12 @@ class PlotOutcome(Enum):
 
 
 # EMS plot_status.stopped after a run (see axidrawinternal/axidraw.py, pause_check).
+# 1 and 2 (pause from a "!" layer name, pause between copies) can't happen with
+# Rosetta's numbered layers and single copies; they're mapped for completeness.
 _CODES = {
     0: PlotOutcome.COMPLETED,
+    1: PlotOutcome.PAUSED,
+    2: PlotOutcome.PAUSED,
     101: PlotOutcome.NOT_CONNECTED,
     102: PlotOutcome.PAUSED,  # physical pause button
     103: PlotOutcome.PAUSED,  # our software pause
@@ -2713,7 +2724,10 @@ class PlotRunner:
             ad.options.mode = "layers"
             ad.options.layer = layer
         self._pause = self._event_factory()
-        ad.set_up_pause_receiver(self._pause)
+        # pyaxidraw's plot_run() installs its own pause event via set_up_pause_receiver();
+        # redirect that call to ours (pinned by test_pause_receiver_can_be_redirected).
+        install_receiver = ad.set_up_pause_receiver
+        ad.set_up_pause_receiver = lambda _ems_event: install_receiver(self._pause)
 
         done = threading.Event()
         poller = None
@@ -2767,10 +2781,7 @@ def set_resume_origin_home(resume_svg: str) -> str:
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `.venv\Scripts\python -m pytest tests\test_runner.py -v`
-Expected: `7 passed`. If `test_pause_then_resume` fails because the outcome is COMPLETED, pyaxidraw 3.9.6's `plot_run` is replacing the pause receiver. In that case:
-- Open `.venv\Lib\site-packages\pyaxidraw\axidraw.py` and find where `plot_run` sets `_software_pause_event`.
-- Move the `ad.set_up_pause_receiver(self._pause)` call to wherever pyaxidraw's own setup finishes.
-- Rerun. Report the change in the commit message.
+Expected: `7 passed`. Never edit files under `.venv\Lib\site-packages`, because the engine stays unmodified. If pausing doesn't work, check that `tests\test_engine_contract.py::test_pause_receiver_can_be_redirected` still passes, and report back.
 
 - [ ] **Step 6: Commit**
 
@@ -3458,7 +3469,7 @@ Expected: `4 passed`
 - [ ] **Step 5: Run the whole suite**
 
 Run: `.venv\Scripts\python -m pytest -v`
-Expected: `115 passed`
+Expected: `118 passed`
 
 - [ ] **Step 6: Commit**
 
