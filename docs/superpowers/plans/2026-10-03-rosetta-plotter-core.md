@@ -1102,7 +1102,7 @@ git commit -m "feat: inline CSS rules so Illustrator class colors reach the EMS 
 import pytest
 
 from rosetta.flatten import Shape, flatten
-from rosetta.geometry_testing import shapes_bbox
+from tests.helpers import shapes_bbox
 from rosetta.svgdoc import normalize
 from tests import samples
 
@@ -1436,6 +1436,13 @@ git add src\rosetta\issues.py tests\test_issues.py
 git commit -m "feat: problem checker for text, images, masks, fills, white shapes" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
+> **Review follow-up (applied during execution, commit `954cad7`):**
+> - **`flatten_with_report(doc)`** returns `Flattened(shapes, skipped)`, where `skipped` holds the element types EMS reached but couldn't draw. `flatten()` still returns just the shapes.
+> - **Problem checks.** `scan_skipped()` reports text and images from that `skipped` set, plus `unsupported` for any other type. `scan_document()` now checks only clipping masks.
+> - **Near-white.** `colors.is_white()` (every channel at least 0xF0) is the single near-white rule. White shapes are no longer also counted as fill-only.
+> - **SVG fixes.** Paint set on the root `<svg>` is moved onto a wrapper group, because EMS ignores it on the root. Plain `href` on `<use>` is copied to `xlink:href`. Fill-only open subpaths are closed, and zero-length subpaths are dropped.
+> - **Tests.** `shapes_bbox` moved to `tests/helpers.py`. An EMS-parity test checks that the drawn length matches an EMS preview to within 0.05 mm.
+
 ---
 
 ### Task 10: PDF and AI import
@@ -1454,7 +1461,7 @@ import pytest
 
 from rosetta.errors import ImportProblem
 from rosetta.flatten import flatten
-from rosetta.geometry_testing import shapes_bbox
+from tests.helpers import shapes_bbox
 from rosetta.pdf_import import page_count, pdf_page_to_svg
 from rosetta.svgdoc import normalize
 
@@ -1665,8 +1672,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from rosetta.errors import ImportProblem
-from rosetta.flatten import Shape, flatten
-from rosetta.issues import Issue, pdf_text_issue, scan_document, scan_shapes
+from rosetta.flatten import Shape, flatten_with_report
+from rosetta.issues import Issue, pdf_text_issue, scan_document, scan_shapes, scan_skipped
 from rosetta.pdf_import import pdf_page_to_svg
 from rosetta.svgdoc import normalize
 
@@ -1708,9 +1715,14 @@ def load_artwork(path: Path, page: int = 0) -> Artwork:
         if has_text:
             extra_issues.append(pdf_text_issue())
 
-    issues = scan_document(doc.root, doc.source) + extra_issues
-    shapes = flatten(doc)
-    issues += scan_shapes(shapes)
+    report = flatten_with_report(doc)
+    shapes = report.shapes
+    issues = (
+        scan_document(doc.root, doc.source)
+        + scan_skipped(report.skipped)
+        + extra_issues
+        + scan_shapes(shapes)
+    )
     blocking = [issue for issue in issues if issue.blocking]
     if blocking:
         raise ImportProblem(blocking[0].message)
@@ -2107,7 +2119,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'rosetta.compose'`
 """Put artwork on paper: placement, clipping to paper and machine reach, grouping by pen color."""
 from dataclasses import dataclass, field
 
-from rosetta.colors import WHITE, color_name
+from rosetta.colors import color_name, is_white
 from rosetta.geometry import Point, Rect, bbox, clip_polyline, contains, intersect, place_point
 from rosetta.loader import Artwork
 from rosetta.models import MachineModel
@@ -2176,7 +2188,7 @@ def compose_job(
     for piece in pieces:
         art, placement = piece.artwork, piece.placement
         for shape in art.shapes:
-            if skip_white and shape.color == WHITE:
+            if skip_white and is_white(shape.color):
                 continue
             for polyline in shape.polylines:
                 placed = [
@@ -3580,7 +3592,7 @@ from pathlib import Path
 
 import pytest
 
-from rosetta.geometry_testing import shapes_bbox
+from tests.helpers import shapes_bbox
 from rosetta.loader import load_artwork
 
 REAL = Path(__file__).parent / "files" / "real"
