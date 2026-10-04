@@ -29,6 +29,9 @@ def test_engine_dependencies_match_ems_tested_versions():
 def test_internal_attributes_used_by_runner():
     ad = axidraw.AxiDraw()
     assert callable(ad.set_up_pause_receiver)
+    assert callable(ad.disconnect)
+    assert callable(ad.pen.pen_raise)
+    assert hasattr(ad, "digest")
     assert hasattr(ad.plot_status, "stopped")
     assert hasattr(ad.plot_status.stats, "pt_estimate")
     assert hasattr(ad.plot_status.stats, "down_travel_inch")
