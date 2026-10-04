@@ -641,9 +641,9 @@ git commit -m "feat: AxiDraw model travel table and pen types" -m "Co-Authored-B
 """Synthetic SVGs that mimic what each app exports. Real exports are tested in Task 20."""
 
 # Illustrator "Export As" with Responsive on: no width/height, viewBox in points, CSS classes.
-# 283.4646 pt = 100 mm.
+# 283.464567 pt = 100 mm.
 ILLUSTRATOR_EXPORT = b"""<?xml version="1.0" encoding="UTF-8"?>
-<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 566.9291 283.4646">
+<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 566.929134 283.464567">
   <defs><style>.cls-1{fill:none;stroke:#ff0000;stroke-miterlimit:10;}.cls-2{fill:#0000ff;}</style></defs>
   <rect class="cls-1" x="0" y="0" width="283.4646" height="283.4646"/>
   <circle class="cls-2" cx="425.1969" cy="141.7323" r="70.8661"/>
