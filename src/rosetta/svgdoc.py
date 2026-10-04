@@ -4,8 +4,10 @@ After normalize(): the root has width/height in mm and a viewBox, and <style> ru
 been copied onto elements (see inline_css), so the EMS parser reads the file the way the
 student's app drew it.
 """
+import re
 from dataclasses import dataclass
 
+import tinycss2
 from lxml import etree
 
 from rosetta.errors import ImportProblem
@@ -78,6 +80,7 @@ def normalize(raw: bytes, source_hint: str | None = None) -> NormalizedSvg:
     root.set("width", f"{width_mm:.6f}mm")
     root.set("height", f"{height_mm:.6f}mm")
     root.set("viewBox", " ".join(f"{value:.6f}" for value in viewbox))
+    inline_css(root)
     return NormalizedSvg(root, width_mm, height_mm, source)
 
 
@@ -103,3 +106,83 @@ def _implied_viewbox(root, width_mm: float, height_mm: float) -> tuple[float, fl
     if width_value and height_value and width_unit in ("", "px") and height_unit in ("", "px"):
         return (0.0, 0.0, width_value, height_value)
     return (0.0, 0.0, width_mm * 96.0 / MM_PER_INCH, height_mm * 96.0 / MM_PER_INCH)
+
+
+_SIMPLE_SELECTOR = re.compile(r"^(?P<tag>[A-Za-z][\w-]*)?(?P<rest>(?:[.#][\w-]+)*)$")
+
+
+def inline_css(root: etree._Element) -> None:
+    """Copy <style> rules onto each element's style attribute.
+
+    The EMS parser ignores <style>, and Illustrator's default export puts every color in
+    CSS classes. Supports simple selectors only (tag, .class, #id, and combinations like
+    path.cls-1); others are skipped. An element's own style attribute wins.
+    """
+    rules = []
+    for style_element in root.iter(f"{{{SVG_NS}}}style", "style"):
+        for rule in tinycss2.parse_stylesheet(
+            style_element.text or "", skip_comments=True, skip_whitespace=True
+        ):
+            if rule.type != "qualified-rule":
+                continue
+            declarations = {
+                declaration.name.lower(): tinycss2.serialize(declaration.value).strip()
+                for declaration in tinycss2.parse_declaration_list(
+                    rule.content, skip_comments=True, skip_whitespace=True
+                )
+                if declaration.type == "declaration"
+            }
+            for selector_text in tinycss2.serialize(rule.prelude).split(","):
+                parsed = _parse_selector(selector_text.strip())
+                if parsed is not None:
+                    specificity, matcher = parsed
+                    rules.append((specificity, len(rules), matcher, declarations))
+    if not rules:
+        return
+    for element in root.iter():
+        if not isinstance(element.tag, str):
+            continue
+        matched = sorted(
+            (specificity, order, declarations)
+            for specificity, order, matcher, declarations in rules
+            if matcher(element)
+        )
+        if not matched:
+            continue
+        merged: dict[str, str] = {}
+        for _specificity, _order, declarations in matched:
+            merged.update(declarations)
+        merged.update(_parse_style_attribute(element.get("style")))
+        element.set("style", ";".join(f"{key}:{value}" for key, value in merged.items()))
+
+
+def _parse_selector(text: str):
+    """Return (specificity, matcher) for a simple selector, or None if unsupported."""
+    match = _SIMPLE_SELECTOR.match(text)
+    if not text or not match:
+        return None
+    tag = match.group("tag")
+    parts = re.findall(r"[.#][\w-]+", match.group("rest"))
+    classes = {part[1:] for part in parts if part[0] == "."}
+    ids = {part[1:] for part in parts if part[0] == "#"}
+
+    def matcher(element) -> bool:
+        if tag and etree.QName(element).localname != tag:
+            return False
+        if ids and element.get("id") not in ids:
+            return False
+        if classes and not classes.issubset((element.get("class") or "").split()):
+            return False
+        return True
+
+    return (len(ids), len(classes), 1 if tag else 0), matcher
+
+
+def _parse_style_attribute(text: str | None) -> dict[str, str]:
+    result = {}
+    for part in (text or "").split(";"):
+        if ":" in part:
+            key, value = part.split(":", 1)
+            if key.strip():
+                result[key.strip().lower()] = value.strip()
+    return result
