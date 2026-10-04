@@ -5,6 +5,7 @@ succeeds, so set_home() reconnects, and release_for_plot() returns Home before a
 run takes over (spec §6.1).
 """
 import dataclasses
+import threading
 from enum import Enum
 
 from plotink import ebb_motion, ebb_serial
@@ -37,6 +38,7 @@ class Plotter:
         self._ad = None
         self._settings: PlotSettings | None = None
         self._pen_is_down = False
+        self._pause: threading.Event | None = None
 
     @property
     def connected(self) -> bool:
@@ -47,10 +49,19 @@ class Plotter:
         ad.interactive()
         apply_settings(ad, settings)
         ad.options.units = EMS_UNITS_MM
+        pause = threading.Event()
+        ad.set_up_pause_receiver(pause)  # EMS checks it before every step of a move
         if not ad.connect():
             return False
         self._ad, self._settings, self._pen_is_down = ad, dataclasses.replace(settings), False
+        self._pause = pause
         return True
+
+    def request_pause(self) -> None:
+        """Ask the move in progress to stop at its next step (pen up). Safe to call from any thread,
+        e.g. for Ctrl+C. The move then raises PlotterStopped, like the pause button does."""
+        if self._pause is not None:
+            self._pause.set()
 
     def disconnect(self) -> None:
         """Raise the pen, then let go of the USB port. Safe to call when not connected."""
@@ -65,6 +76,7 @@ class Plotter:
             ad.disconnect()
         finally:
             self._ad = None
+            self._pause = None
             self._pen_is_down = False
 
     def firmware(self) -> str:

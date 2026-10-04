@@ -22,6 +22,9 @@ class FakeAD:
     def interactive(self):
         self.calls.append(("interactive",))
 
+    def set_up_pause_receiver(self, software_pause_event):
+        self.pause_event = software_pause_event  # EMS stops moving once this is set
+
     def connect(self):
         self.calls.append(("connect",))
         self._pos = (0.0, 0.0)
@@ -90,6 +93,24 @@ def test_connect_uses_mm_and_settings():
     assert fakes[0].options.units == 2
     assert fakes[0].options.model == 5
     assert fakes[0].calls[:2] == [("interactive",), ("connect",)]
+
+
+def test_request_pause_sets_the_engines_pause_event():
+    plotter, fakes = _connected()
+    assert not fakes[0].pause_event.is_set()
+    plotter.request_pause()
+    assert fakes[0].pause_event.is_set()
+
+
+def test_request_pause_when_not_connected_does_nothing():
+    Plotter(factory=FakeAD).request_pause()
+
+
+def test_a_pause_request_does_not_outlive_the_connection():
+    plotter, fakes = _connected()
+    plotter.request_pause()
+    plotter.set_home()  # reconnects: a fresh session
+    assert not fakes[1].pause_event.is_set()
 
 
 def test_connect_failure_returns_false():
@@ -437,6 +458,30 @@ def test_real_ems_pause_button_during_a_trace_is_reported_not_swallowed(monkeypa
     assert ebb.sm == moves_when_stopped
     plotter.disconnect()
     assert ebb.closed
+
+
+def test_real_ems_pause_request_stops_a_trace_between_moves_and_lifts_the_pen(monkeypatch):
+    plotter, ebb = _on_real_ems(monkeypatch)
+    ebb.on_sm = lambda count: plotter.request_pause() if count == 15 else None
+    with pytest.raises(PlotterStopped, match="paused or stopped"):
+        plotter.trace((50, 40, 250, 180))
+    assert 15 <= ebb.sm <= 16  # it did not carry on around the outline
+    assert ebb.pen_cmds[-1][0] == "up"
+    moves_when_stopped = ebb.sm
+    with pytest.raises(PlotterStopped):  # EMS ignores moves from here on
+        plotter.goto(100, 100)
+    assert ebb.sm == moves_when_stopped
+    plotter.disconnect()
+    assert ebb.closed
+
+
+def test_real_ems_pause_requested_before_a_move_stops_it_at_once(monkeypatch):
+    plotter, ebb = _on_real_ems(monkeypatch)
+    plotter.request_pause()
+    with pytest.raises(PlotterStopped):
+        plotter.goto(100, 100)
+    assert ebb.sm == 0
+    plotter.disconnect()
 
 
 def test_real_ems_set_home_gets_a_paused_plotter_moving_again(monkeypatch):

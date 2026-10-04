@@ -16,12 +16,16 @@ Safety rules every command follows:
     model, then switch the motors off so the carriage slides by hand when it is asked to be
     slid Home (EMS never releases the motors on its own);
   * anything that stops a plot (Ctrl+C, a lost cable) leaves the pen up and the progress in
-    <plot>.resume.svg, and tells him how to continue.
+    <plot>.resume.svg (with <plot>.resume.json recording which plot.svg it belongs to), and tells
+    him how to continue; a finished layer clears it, so old progress is never offered again.
 """
 import argparse
 import dataclasses
+import hashlib
 import json
 import math
+import os
+import signal
 import sys
 import threading
 from pathlib import Path
@@ -41,7 +45,12 @@ NO_PLOTTER = "No plotter found. Plug in the USB cable and the power adapter."
 NO_PLOTTER_RETRY = ("No plotter found. Check the USB cable and power adapter, then press Enter to try again "
                     "(or type q to stop). ")
 PLUG_BACK_IN = "Plug the plotter's USB cable back in, then press Enter (or type q to stop). "
+CHECK_CABLE_AND_POWER = "Check the cable and power, then press Enter (or type q to stop). "
 PAUSED_MENU = "Paused. Type r to resume, h to send the pen Home first, or q to stop: "
+UNREACHABLE = ("The plotter can't be reached, so the pen may still be down and the motors on. "
+               "Unplug the power adapter, lift the pen by hand if needed, then slide it Home.")
+NOTHING_TO_RESUME = ("Nothing to resume: the layers so far are finished. "
+                     "To plot the remaining colors, prepare a job with only those colors.")
 
 
 def format_duration(seconds: float) -> str:
@@ -212,7 +221,7 @@ def _ink_bbox(meta: dict, where: Path) -> tuple[float, float, float, float]:
 def _settings(args, meta) -> PlotSettings:
     return PlotSettings(
         model=meta["model"],
-        penlift=getattr(args, "penlift", 1),
+        penlift=getattr(args, "penlift", None) or 1,
         pen_down=getattr(args, "pen_down", 30),
         pen_type=getattr(args, "pen_type", "fineliner"),
     )
@@ -318,8 +327,9 @@ def _preflight(args, job_model: int, from_job: bool = True) -> PlotSettings | No
     Needs the power adapter in and (unless --skip-model-check) a plotter whose stored model is
     the job's. Returns the settings to plot with, or None after saying what is wrong.
     """
+    asked = args.penlift  # None unless --penlift was given
     wanted = PlotSettings(
-        model=job_model, penlift=args.penlift, pen_down=args.pen_down,
+        model=job_model, penlift=asked or 1, pen_down=args.pen_down,
         pen_type=getattr(args, "pen_type", "fineliner"),
     )
     plotter = Plotter()
@@ -339,7 +349,10 @@ def _preflight(args, job_model: int, from_job: bool = True) -> PlotSettings | No
         return None
     finally:
         plotter.disconnect()
-    return dataclasses.replace(wanted, penlift=identity.penlift if identity else args.penlift)
+    stored = identity.penlift if identity else None
+    if asked is not None and stored is not None and asked != stored:
+        print(f"Note: this plotter has pen lift {stored} stored, but you asked for {asked}. Using {asked}.")
+    return dataclasses.replace(wanted, penlift=asked or stored or 1)
 
 
 def _release_motors(settings: PlotSettings) -> bool:
@@ -365,8 +378,16 @@ def _say_it_stopped(what: str, stopped: PlotterStopped, settings: PlotSettings) 
     if _release_motors(settings):
         print("  The motors are off, so the carriage slides freely.")
     else:
-        print("  The motors may still be holding the carriage: unplug the power adapter before you slide it.")
+        print(f"  {UNREACHABLE}")
     print(f"  Reason: {stopped}")
+
+
+def _stop_moving(plotter: Plotter):
+    """What Ctrl+C does during a trace or test mark: ask EMS to stop at its next step, pen up."""
+    def stop():
+        print("\nStopping...")
+        plotter.request_pause()
+    return stop
 
 
 def cmd_trace(args) -> int:
@@ -382,7 +403,7 @@ def cmd_trace(args) -> int:
         return 1
     stopped = None
     try:
-        plotter.trace(box)
+        _run_interruptibly(lambda: plotter.trace(box), _stop_moving(plotter))
     except PlotterStopped as problem:
         stopped = problem
     finally:
@@ -412,7 +433,7 @@ def cmd_pen(args) -> int:
         plotter.pen_up()
         if args.mark:
             x, y = args.mark
-            plotter.test_mark(x, y)
+            _run_interruptibly(lambda: plotter.test_mark(x, y), _stop_moving(plotter))
             print(f"Drew a 10 mm test line near ({x:g}, {y:g}) and returned Home.")
         else:
             print("The pen is up.")
@@ -428,14 +449,37 @@ def cmd_pen(args) -> int:
 
 # Plotting.
 
+POLL_SECONDS = 0.1
+_NO_HANDLER = object()
+
+
+def _request_pause(on_interrupt) -> None:
+    """Call on_interrupt(); if that fails (a console that can't print, a stray exception), try again.
+
+    A lost pause request means the plotter keeps plotting, so nothing is allowed to escape from here.
+    """
+    for _ in range(3):
+        try:
+            on_interrupt()
+            return
+        except BaseException:
+            continue
+
+
 def _run_interruptibly(work, on_interrupt):
     """Run work() on a worker thread; Ctrl+C calls on_interrupt() instead of stopping Python.
+
+    While the work runs, Ctrl+C only makes a note (a handler that cannot raise). This loop acts on
+    the note from ordinary code, so nothing can interrupt the pause request itself, however fast
+    Ctrl+C repeats. It never returns or raises before the worker has finished, apart from handing
+    back the worker's own exception. Ctrl+C is restored to normal afterwards.
 
     Waits on an Event, not Thread.join(): on Python 3.12 a Ctrl+C during join(timeout) can
     mark a still-running thread as finished.
     """
     finished = threading.Event()
     outcome = {}
+    notes = []
 
     def target():
         try:
@@ -445,12 +489,29 @@ def _run_interruptibly(work, on_interrupt):
         finally:
             finished.set()
 
-    threading.Thread(target=target, daemon=True).start()
-    while not finished.is_set():
+    def note_ctrl_c(signum, frame):
+        notes.append(signum)  # nothing here can raise
+
+    try:
+        previous = signal.signal(signal.SIGINT, note_ctrl_c)
+    except ValueError:  # not the main thread, where Ctrl+C can't reach us anyway
+        previous = _NO_HANDLER
+    started = False
+    try:
+        threading.Thread(target=target, daemon=True).start()
+        started = True
+        while not finished.wait(POLL_SECONDS):
+            if notes:
+                notes.clear()
+                _request_pause(on_interrupt)
+    finally:
         try:
-            finished.wait(0.2)
-        except KeyboardInterrupt:
-            on_interrupt()
+            if started and not finished.is_set():  # only if the loop itself failed: don't leave it plotting
+                _request_pause(on_interrupt)
+                finished.wait()
+        finally:
+            if previous is not _NO_HANDLER:
+                signal.signal(signal.SIGINT, signal.default_int_handler if previous is None else previous)
     if "error" in outcome:
         raise outcome["error"]
     return outcome["result"]
@@ -477,10 +538,38 @@ def _resume_path(plot: Path) -> Path:
     return plot.with_name(plot.stem + ".resume.svg")
 
 
-def _load_resume(resume_file: Path, layers: list[dict]) -> tuple[str, int]:
-    """A saved paused plot and the position (in `layers`) of the layer it will finish."""
+def _note_path(resume_file: Path) -> Path:
+    """plot.resume.svg -> plot.resume.json: which plot.svg (and model) the saved progress is for."""
+    return resume_file.with_suffix(".json")
+
+
+def _fingerprint(plot: Path, model: int) -> dict:
+    svg = plot.with_suffix(".svg")
+    return {"plot": svg.name, "sha256": hashlib.sha256(svg.read_bytes()).hexdigest(), "model": model}
+
+
+def _write_atomically(path: Path, text: str) -> None:
+    """Write so that an interruption leaves the old file or the new one, never half of one."""
+    scratch = path.with_name(path.name + ".tmp")
+    scratch.write_text(text, encoding="utf-8")
+    os.replace(scratch, path)
+
+
+def _load_resume(resume_file: Path, layers: list[dict], plot: Path, model: int) -> tuple[str, int]:
+    """A saved paused plot and the position (in `layers`) of the layer it will finish.
+
+    Refuses progress saved for another version of the plot: the saved copy would be drawn from
+    the old geometry while later layers come from the new plot.svg.
+    """
     text = _read_text(resume_file, " — there is no paused plot to resume. "
                                    "(One is saved there when you stop a plot with Ctrl+C and q.)")
+    svg_name = plot.with_suffix(".svg").name
+    cannot_tell = f" — can't tell which version of {svg_name} this saved progress belongs to. "
+    saved = _read_json(_note_path(resume_file), cannot_tell + "Start the plot over instead.",
+                       ". Start the plot over instead.")
+    if saved != _fingerprint(plot, model):
+        raise JobProblem(f"This saved progress belongs to a different version of {svg_name} — it was "
+                         "prepared again after you stopped. Start the plot over instead.")
     number = paused_layer(text)
     if number is None:
         raise JobProblem(f"{resume_file} doesn't hold a paused plot that can be resumed.")
@@ -501,17 +590,23 @@ def _print_estimate(svg: str, layers: list[dict], settings: PlotSettings) -> Non
 class _PlotRun:
     """Plots the layers one pen at a time, keeping the machine safe through pauses and cable pulls.
 
-    Progress is saved to <plot>.resume.svg whenever a run leaves resume data behind.
+    Progress is saved to <plot>.resume.svg (and <plot>.resume.json, naming the plot it is for)
+    whenever a run leaves resume data behind, and deleted again as soon as a layer is finished,
+    so what is on disk is always the progress of a layer that still needs finishing.
     """
 
-    def __init__(self, svg: str, layers: list[dict], settings: PlotSettings, plot_path: Path):
+    def __init__(self, svg: str, layers: list[dict], settings: PlotSettings, plot_path: Path,
+                 layers_done: int = 0, saved: bool = False):
         self.svg = svg
         self.layers = layers
         self.settings = settings
         self.plot_path = plot_path
         self.resume_file = _resume_path(plot_path)
+        self.note_file = _note_path(self.resume_file)
+        self.fingerprint = _fingerprint(plot_path, settings.model)
         self.runner = PlotRunner()
-        self.saved = False  # did this session save progress?
+        self.layers_done = layers_done  # layers completely drawn, in this or an earlier session
+        self.saved = saved  # is there a current resume file (saved earlier, or by this session)?
 
     def plot_layer(self, index: int, resume_svg: str | None = None) -> bool:
         """Draw layer `index` (or finish it from resume_svg). False if the plot was stopped for good."""
@@ -534,6 +629,8 @@ class _PlotRun:
 
             if outcome is PlotOutcome.COMPLETED:
                 if action != "home":
+                    self.layers_done += 1
+                    self._forget_progress()  # a pause saved earlier in this layer is now out of date
                     print(f"Layer {index + 1} done.")
                     return True
                 print(result.message)
@@ -551,10 +648,15 @@ class _PlotRun:
                 if _wants_to_stop(input(NO_PLOTTER_RETRY)):
                     return self.stop()
             else:  # the cable was pulled, or the run failed
-                self._say(result)
+                cable_lost = outcome is PlotOutcome.DISCONNECTED
+                if cable_lost or resume_svg is None:
+                    self._say(result)
+                elif result.details:
+                    print(f"  Details: {result.details}")  # (the message itself is part of the prompt)
                 if resume_svg is None:
                     return self.stop()  # nothing to come back to
-                resume_svg = self._rehome(resume_svg)
+                prompt = PLUG_BACK_IN if cable_lost else f"{result.message} {CHECK_CABLE_AND_POWER}"
+                resume_svg = self._rehome(resume_svg, prompt)
                 if resume_svg is None:
                     return self.stop()
                 action = "resume"
@@ -564,11 +666,12 @@ class _PlotRun:
         if _release_motors(self.settings):
             print("Stopped. The motors are off — slide the pen Home before the next plot.")
         else:
-            print("Stopped. The plotter couldn't be reached, so its motors may still be on — "
-                  "unplug the power adapter before you slide the pen Home.")
+            print(f"Stopped. {UNREACHABLE}")
         if self.saved:
             print(f"Progress is saved in {self.resume_file}. "
                   f"To finish later: rosetta-plot plot {self.plot_path} --resume")
+        elif self.layers_done:
+            print(NOTHING_TO_RESUME)
         return False
 
     def _attempt(self, action: str, number: int, resume_svg: str | None):
@@ -593,11 +696,22 @@ class _PlotRun:
 
     def _save(self, resume_svg: str) -> None:
         try:
-            self.resume_file.write_text(resume_svg, encoding="utf-8")
+            _write_atomically(self.note_file, json.dumps(self.fingerprint))
+            _write_atomically(self.resume_file, resume_svg)
         except OSError as problem:
             print(f"Couldn't save progress to {self.resume_file}: {problem}")
         else:
             self.saved = True
+
+    def _forget_progress(self) -> None:
+        """Delete the saved progress. Called when a layer finishes: it would otherwise offer
+        --resume the tail of a layer that is already drawn."""
+        self.saved = False
+        for path in (self.resume_file, self.note_file):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as problem:
+                print(f"Couldn't delete {path} ({problem}). Delete it so it isn't resumed by mistake.")
 
     @staticmethod
     def _say(result) -> None:
@@ -605,11 +719,11 @@ class _PlotRun:
         if result.details:
             print(f"  Details: {result.details}")
 
-    def _rehome(self, resume_svg: str) -> str | None:
-        """Wait for the cable and for him to slide the pen Home by hand; the resume data, now
-        starting from Home. None if he'd rather stop."""
+    def _rehome(self, resume_svg: str, prompt: str) -> str | None:
+        """Wait for the plotter to be reachable and for him to slide the pen Home by hand; the
+        resume data, now starting from Home. None if he'd rather stop."""
         while True:
-            if _wants_to_stop(input(PLUG_BACK_IN)):
+            if _wants_to_stop(input(prompt)):
                 return None
             if _release_motors(self.settings):
                 break
@@ -624,7 +738,7 @@ def cmd_plot(args) -> int:
     resume_file = _resume_path(args.plot)
     resume_svg, first = None, 0
     if args.resume:
-        resume_svg, first = _load_resume(resume_file, layers)
+        resume_svg, first = _load_resume(resume_file, layers, args.plot, meta["model"])
     settings = _preflight(args, meta["model"])
     if settings is None:
         return 1
@@ -634,7 +748,7 @@ def cmd_plot(args) -> int:
                   f"To continue that one instead, press Ctrl+C now and run: rosetta-plot plot {args.plot} --resume")
         _print_estimate(svg, layers, settings)
 
-    run = _PlotRun(svg, layers, settings, args.plot)
+    run = _PlotRun(svg, layers, settings, args.plot, layers_done=first, saved=resume_svg is not None)
     try:
         input(SLIDE_HOME)
         if resume_svg is not None:
@@ -649,11 +763,7 @@ def cmd_plot(args) -> int:
         print()
         run.stop()
         return 130
-    try:
-        resume_file.unlink(missing_ok=True)
-    except OSError as problem:
-        print(f"Couldn't delete {resume_file} ({problem}). Delete it so it isn't resumed by mistake.")
-    print("Done! The pen is back Home.")
+    print("Done! The pen is back Home.")  # (each finished layer already deleted the saved progress)
     return 0
 
 
@@ -671,8 +781,9 @@ def _add_pen_arguments(parser, pen_type: bool = True) -> None:
                         help=f"pen-down height, percent (0-{PEN_DOWN_MAX})")
     if pen_type:
         parser.add_argument("--pen-type", choices=sorted(PEN_TYPES), default="fineliner")
-    parser.add_argument("--penlift", type=int, choices=[1, 2, 3], default=1,
-                        help="pen-lift type, used only if the plotter has none stored")
+    parser.add_argument("--penlift", type=int, choices=[1, 2, 3], default=None,
+                        help="pen-lift type (1 = model default, 2 = standard servo, 3 = brushless); "
+                             "normally read from the plotter, so give it only to override that")
 
 
 def _add_skip_model_check(parser) -> None:
@@ -705,7 +816,9 @@ def main(argv=None) -> int:
 
     identify = commands.add_parser("identify", help="store the model on the plotter")
     identify.add_argument("--model", type=int, required=True, choices=sorted(MODELS))
-    identify.add_argument("--penlift", type=int, choices=[1, 2, 3], default=1)
+    identify.add_argument("--penlift", type=int, choices=[1, 2, 3], default=1,
+                          help="pen-lift type to store: 1 model default (the default), 2 standard servo, "
+                               "3 for the brushless pen-lift upgrade")
     identify.add_argument("--label", default="")
 
     pen = commands.add_parser("pen", help="check the pen-down height on paper; optionally draw a test line")

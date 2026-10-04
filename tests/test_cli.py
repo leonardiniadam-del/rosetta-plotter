@@ -1,15 +1,18 @@
 import _thread
 import argparse
+import hashlib
 import json
+import signal
 import threading
 import time
 
 import pytest
 
 from rosetta import cli
-from rosetta.cli import format_duration, main
+from rosetta.cli import PLUG_BACK_IN, format_duration, main
 from rosetta.engine.identity import Identity
 from rosetta.engine.plotter import IdentityWrite, PlotterStopped
+from rosetta.engine.runner import paused_layer
 from tests import samples
 from tests.cli_session import MID_STROKE, Session, make_plot, new_plotter_ebb, paused_origin
 from tests.fake_ebb import FakeEBB
@@ -263,29 +266,42 @@ def test_trace_that_is_paused_does_not_claim_to_be_home(tmp_path, monkeypatch, c
     _StubPlotter.trace_error = None
 
 
-def test_preflight_plots_with_the_stored_pen_lift_and_the_jobs_model(monkeypatch):
+def _preflight_with(monkeypatch, stored, **given):
+    """cli._preflight against a stub plotter that has `stored` as its identity."""
     _StubPlotter.instances.clear()
-    _StubPlotter.stored = Identity(1, 3, "Lab")
     monkeypatch.setattr("rosetta.cli.Plotter", _StubPlotter)
-    args = argparse.Namespace(penlift=1, pen_down=42, pen_type="marker", skip_model_check=False)
-    try:
-        settings = cli._preflight(args, 1)
-    finally:
-        _StubPlotter.stored = Identity(1, 1, "Lab")
-    assert (settings.model, settings.penlift, settings.pen_down, settings.pen_type) == (1, 3, 42, "marker")
+    monkeypatch.setattr(_StubPlotter, "stored", stored)
+    args = argparse.Namespace(**{"penlift": None, "pen_down": 42, "pen_type": "marker",
+                                 "skip_model_check": stored is None, **given})
+    return cli._preflight(args, 1)
+
+
+def test_preflight_plots_with_the_jobs_model_and_the_settings_asked_for(monkeypatch):
+    settings = _preflight_with(monkeypatch, Identity(1, 3, "Lab"))
+    assert (settings.model, settings.pen_down, settings.pen_type) == (1, 42, "marker")
     assert _StubPlotter.instances[0].disconnected
 
 
-def test_preflight_without_a_stored_identity_uses_the_penlift_asked_for(monkeypatch):
-    _StubPlotter.instances.clear()
-    _StubPlotter.stored = None
-    monkeypatch.setattr("rosetta.cli.Plotter", _StubPlotter)
-    args = argparse.Namespace(penlift=2, pen_down=30, pen_type="fineliner", skip_model_check=True)
-    try:
-        settings = cli._preflight(args, 1)
-    finally:
-        _StubPlotter.stored = Identity(1, 1, "Lab")
-    assert settings.penlift == 2
+@pytest.mark.parametrize("stored, asked, used", [
+    (Identity(1, 3, "Lab"), None, 3),  # not asked for: the pen lift stored on the plotter
+    (Identity(1, 3, "Lab"), 3, 3),
+    (Identity(1, 3, "Lab"), 1, 1),  # asked for something else: what he asked for, and a notice
+    (None, None, 1),  # nothing stored, nothing asked: the default
+    (None, 2, 2),
+])
+def test_preflight_pen_lift_is_the_one_asked_for_else_the_stored_one_else_1(monkeypatch, capsys, stored, asked, used):
+    assert _preflight_with(monkeypatch, stored, penlift=asked).penlift == used
+    said = capsys.readouterr().out
+    if stored is not None and asked not in (None, stored.penlift):
+        assert f"pen lift {stored.penlift} stored" in said and f"Using {asked}" in said
+    else:
+        assert "pen lift" not in said
+
+
+def test_identify_help_says_what_pen_lift_3_is(capsys):
+    with pytest.raises(SystemExit):
+        main(["identify", "--help"])
+    assert "3 for the brushless pen-lift upgrade" in " ".join(capsys.readouterr().out.split())
 
 
 # Waiting on the worker thread.
@@ -310,8 +326,90 @@ def test_run_interruptibly_reraises_what_the_work_raised():
     def work():
         raise RuntimeError("boom")
 
+    before = signal.getsignal(signal.SIGINT)
     with pytest.raises(RuntimeError, match="boom"):
         cli._run_interruptibly(work, lambda: None)
+    assert signal.getsignal(signal.SIGINT) is before  # Ctrl+C works as usual again
+
+
+def test_ctrl_c_only_makes_a_note_while_the_work_runs_and_is_normal_again_afterwards():
+    seen = []
+
+    def work():
+        seen.append(signal.getsignal(signal.SIGINT))
+        return "finished"
+
+    before = signal.getsignal(signal.SIGINT)
+    assert cli._run_interruptibly(work, lambda: None) == "finished"
+    assert seen[0] is not before and callable(seen[0])  # a handler that cannot raise
+    assert signal.getsignal(signal.SIGINT) is before
+
+
+def test_a_ctrl_c_that_lands_while_the_pause_is_being_requested_cannot_escape():
+    release = threading.Event()
+    calls = []
+
+    def on_interrupt():
+        calls.append(True)
+        if len(calls) == 1:
+            _thread.interrupt_main()  # a second press, right inside the first one's handling
+        else:
+            release.set()
+
+    def work():
+        release.wait(5)
+        return "done"
+
+    threading.Timer(0.1, _thread.interrupt_main).start()
+    assert cli._run_interruptibly(work, on_interrupt) == "done"
+    assert len(calls) == 2  # the second press was noted and acted on, not raised
+
+
+def test_a_pause_request_that_fails_is_tried_again_and_nothing_escapes():
+    release = threading.Event()
+    calls = []
+
+    def on_interrupt():
+        calls.append(True)
+        if len(calls) == 1:
+            raise KeyboardInterrupt  # even a Ctrl+C taking the request down with it
+        release.set()
+
+    threading.Timer(0.1, _thread.interrupt_main).start()
+    assert cli._run_interruptibly(lambda: release.wait(5) and "done", on_interrupt) == "done"
+    assert len(calls) == 2
+
+
+def test_the_worker_is_stopped_and_waited_for_even_if_the_wait_loop_itself_breaks(monkeypatch):
+    release = threading.Event()
+    done = []
+    asked = []
+
+    def work():
+        release.wait(5)
+        done.append(True)
+
+    class BreaksOnce(threading.Event):
+        broken = False
+
+        def wait(self, timeout=None):
+            if timeout is not None and not BreaksOnce.broken:
+                BreaksOnce.broken = True
+                raise RuntimeError("the wait broke")
+            return super().wait(timeout)
+
+    monkeypatch.setattr(cli.threading, "Event", BreaksOnce)
+    with pytest.raises(RuntimeError, match="the wait broke"):
+        cli._run_interruptibly(work, lambda: (asked.append(True), release.set()))
+    assert asked and done == [True]  # it did not leave the worker plotting on its own
+
+
+def test_run_interruptibly_also_works_off_the_main_thread():
+    results = []
+    worker = threading.Thread(target=lambda: results.append(cli._run_interruptibly(lambda: 7, lambda: None)))
+    worker.start()
+    worker.join(5)
+    assert results == [7]
 
 
 # Whole sessions at the keyboard, with a real EMS engine and a fake plotter.
@@ -330,6 +428,14 @@ def _watch_slide_prompts(session):
 
 def _resume_file(tmp_path):
     return tmp_path / "plot.resume.svg"
+
+
+def _resume_json(tmp_path):
+    return tmp_path / "plot.resume.json"  # which plot.svg (and model) the saved progress belongs to
+
+
+def _nothing_saved(tmp_path) -> bool:
+    return not _resume_file(tmp_path).exists() and not _resume_json(tmp_path).exists()
 
 
 def test_a_normal_two_layer_plot_draws_both_layers_and_leaves_nothing_behind(tmp_path):
@@ -449,6 +555,9 @@ def test_quitting_a_paused_plot_frees_the_carriage_and_saves_progress_then_resum
     assert ("Stopped. The motors are off — slide the pen Home before the next plot.\n"
             f"Progress is saved in {_resume_file(tmp_path)}. "
             f"To finish later: rosetta-plot plot {plot} --resume") in session.output
+    # The saved progress is tied to this exact plot.svg and model.
+    assert json.loads(_resume_json(tmp_path).read_text(encoding="utf-8")) == {
+        "plot": "plot.svg", "sha256": hashlib.sha256(plot.read_bytes()).hexdigest(), "model": 1}
 
     saved_text = _resume_file(tmp_path).read_text(encoding="utf-8")
     later = Session(["", "", ""], runner_ebbs=[FakeEBB(), FakeEBB()])
@@ -461,7 +570,7 @@ def test_quitting_a_paused_plot_frees_the_carriage_and_saves_progress_then_resum
     assert "Load the red pen (#ff0000; 2 of 2)" in later.prompts[2]  # ...then the rest
     assert later.runs == 2
     assert all(later.drew(ebb) for ebb in later.engine_ebbs)
-    assert not _resume_file(tmp_path).exists()
+    assert _nothing_saved(tmp_path)
     assert "Resuming layer 1 of 2 (black)." in later.output
     assert "About " not in later.output  # no estimate for a half-done layer
     # The saved file says where the pen stopped; he has slid it Home since, so the resume starts from Home.
@@ -476,6 +585,50 @@ def test_resume_without_a_saved_plot_says_so(tmp_path):
     assert session.run(["plot", plot, "--resume"]) == 2
     assert "plot.resume.svg" in session.output and "not found" in session.output
     assert session.prompts == [] and session.runs == 0
+
+
+def _stop_a_paused_plot(tmp_path):
+    """Pause layer 1 of a two-layer plot, quit, and return the plot's path; progress is saved."""
+    plot, _first, session = _pause_in_layer_one(tmp_path, ["", "", "q"])
+    assert session.run(["plot", plot]) == 1, session.output
+    return plot
+
+
+def test_resume_is_refused_if_the_plot_was_prepared_again_after_stopping(tmp_path):
+    plot = _stop_a_paused_plot(tmp_path)
+    plot.write_text(plot.read_text(encoding="utf-8") + "<!-- prepared again -->", encoding="utf-8")
+    later = Session([])
+    assert later.run(["plot", plot, "--resume"]) == 2
+    assert ("This saved progress belongs to a different version of plot.svg — it was prepared again "
+            "after you stopped. Start the plot over instead.") in later.output
+    assert later.prompts == [] and later.runs == 0
+    assert _resume_file(tmp_path).exists()  # left alone: nothing was deleted by the refusal
+
+
+def test_resume_is_refused_if_the_saved_progress_is_for_another_model(tmp_path):
+    plot = _stop_a_paused_plot(tmp_path)
+    saved = json.loads(_resume_json(tmp_path).read_text(encoding="utf-8"))
+    _resume_json(tmp_path).write_text(json.dumps({**saved, "model": 5}), encoding="utf-8")
+    later = Session([])
+    assert later.run(["plot", plot, "--resume"]) == 2
+    assert "different version of plot.svg" in later.output and later.runs == 0
+
+
+def test_resume_is_refused_if_nothing_says_which_plot_the_progress_belongs_to(tmp_path):
+    plot = _stop_a_paused_plot(tmp_path)
+    _resume_json(tmp_path).unlink()
+    later = Session([])
+    assert later.run(["plot", plot, "--resume"]) == 2
+    assert "plot.resume.json" in later.output and "can't tell which version of plot.svg" in later.output
+    assert "Start the plot over instead." in later.output and later.runs == 0
+
+
+def test_resume_is_refused_if_the_note_about_the_plot_is_garbled(tmp_path):
+    plot = _stop_a_paused_plot(tmp_path)
+    _resume_json(tmp_path).write_text("{not json", encoding="utf-8")
+    later = Session([])
+    assert later.run(["plot", plot, "--resume"]) == 2
+    assert "plot.resume.json" in later.output and later.runs == 0
 
 
 def test_resume_of_a_layer_the_plot_does_not_have_is_refused(tmp_path):
@@ -528,7 +681,9 @@ def test_a_lost_usb_cable_is_recovered_after_a_failed_replug(tmp_path):
     assert session.runs == 3  # the plot that died, the resume, layer 2
     assert session.drew(session.engine_ebbs[1]) and session.drew(session.engine_ebbs[2])
     assert all(ebb.closed for ebb in session.engine_ebbs)
-    assert not _resume_file(tmp_path).exists()
+    assert _nothing_saved(tmp_path)
+    # A lost cable is worded as one.
+    assert PLUG_BACK_IN in session.prompts
 
 
 def test_quitting_after_a_lost_usb_cable_keeps_the_progress(tmp_path):
@@ -540,14 +695,17 @@ def test_quitting_after_a_lost_usb_cable_keeps_the_progress(tmp_path):
     assert "The motors are off" in session.output  # the plotter was reachable again, so they are off
 
 
-def test_a_stop_with_no_plotter_to_release_says_to_unplug_the_power(tmp_path):
+def test_a_stop_with_no_plotter_to_release_says_the_pen_may_still_be_down(tmp_path):
     plot = make_plot(tmp_path)
-    session = Session(["", "", "q"], runner_ebbs=[FakeEBB(die_after_moves=20)])
+    dies_mid_stroke = FakeEBB(die_after_moves=MID_STROKE)
+    session = Session(["", "", "q"], runner_ebbs=[dies_mid_stroke])
     session.when_prompted("Plug the plotter's USB cable", lambda s: setattr(s, "no_plotter", True))
     assert session.run(["plot", plot]) == 1, session.output
+    assert dies_mid_stroke.pen_cmds[-1][0] == "down"  # the engine could not lift it: the cable was gone
     assert _resume_file(tmp_path).exists()
     assert "motors are off" not in session.output  # it couldn't switch them off, and doesn't claim to
-    assert "unplug the power adapter" in session.output.split("Stopped.")[1]
+    assert ("The plotter can't be reached, so the pen may still be down and the motors on. "
+            "Unplug the power adapter, lift the pen by hand if needed, then slide it Home.") in session.output
     assert "--resume" in session.output
 
 
@@ -608,11 +766,14 @@ def test_a_failed_resume_asks_to_rehome_and_tries_again(tmp_path):
     released = _watch_slide_prompts(session)
     assert session.run(["plot", plot]) == 0, session.output
     assert session.answers == []
-    assert "The plot stopped unexpectedly." in session.output
     assert "  Details: RuntimeError: serial exploded" in session.output
+    # An error is worded as one, not as a pulled cable.
+    assert ("The plot stopped unexpectedly. Check the cable and power, then press Enter (or type q to stop). "
+            in session.prompts)
+    assert PLUG_BACK_IN not in session.prompts
     assert released == [True, True]
     assert session.runs == 4
-    assert not _resume_file(tmp_path).exists()
+    assert _nothing_saved(tmp_path)
 
 
 def test_a_failed_first_run_has_nothing_to_resume_so_it_stops_with_the_carriage_free(tmp_path):
@@ -742,9 +903,30 @@ def test_trace_that_lost_the_cable_says_to_unplug_the_power_before_sliding(tmp_p
     session = Session([""], plotter=new_plotter_ebb(die_after_moves=40))
     assert session.run(["trace", plot]) == 1, session.output
     assert "Slide the pen Home before plotting." in session.output
-    assert "unplug the power adapter before you slide it" in session.output
     assert "  Reason: " in session.output
     assert "The motors are off" not in session.output  # it could not switch them off, and doesn't say so
+    assert ("The plotter can't be reached, so the pen may still be down and the motors on. "
+            "Unplug the power adapter, lift the pen by hand if needed, then slide it Home.") in session.output
+
+
+def test_ctrl_c_during_a_trace_stops_it_like_any_other_stop(tmp_path):
+    plot = make_plot(tmp_path)
+    session = Session([""])
+    session.press_ctrl_c_at(session.plotter, 15, presses=3)
+    before = _snapshot()
+    assert session.run(["trace", plot]) == 1, session.output
+    ebb = session.plotter
+    assert "Stopping..." in session.output
+    assert "The plotter stopped before the trace finished. Slide the pen Home before plotting." in session.output
+    assert "The motors are off, so the carriage slides freely." in session.output
+    assert "returned Home" not in session.output
+    assert ebb.log.count("EM,0,0") == 2  # before the trace, and after it was stopped
+    assert [c for c in ebb.log if c.startswith("EM,")][-1] == "EM,0,0"
+    assert 15 <= ebb.sm <= 17  # it stopped moving at once, rather than finishing the outline
+    assert ebb.pen_cmds[-1][0] == "up" and ebb.closed
+    assert _worker_threads_gone(before[0])
+    assert signal.getsignal(signal.SIGINT) is before[1]
+    assert "Traceback" not in session.output
 
 
 # pen
@@ -786,6 +968,19 @@ def test_a_pen_test_stopped_by_the_pause_button_frees_the_carriage_and_says_so(t
     assert session.plotter.log.count("EM,0,0") == 2
     assert session.plotter.pen_cmds[-1][0] == "up"
     assert session.plotter.closed
+
+
+def test_ctrl_c_during_the_test_mark_stops_it_with_the_pen_up_and_the_carriage_free(tmp_path):
+    session = Session(["", ""])
+    session.press_ctrl_c_at(session.plotter, 4, presses=3)
+    assert session.run(["pen", "--model", "1", "--mark", "10", "10"]) == 1, session.output
+    ebb = session.plotter
+    assert "The plotter stopped before the pen test finished. Slide the pen Home before plotting." in session.output
+    assert "The motors are off, so the carriage slides freely." in session.output
+    assert "returned Home" not in session.output
+    assert ebb.log.count("EM,0,0") == 2
+    assert ebb.pen_cmds[-1][0] == "up" and ebb.closed
+    assert "Traceback" not in session.output
 
 
 def test_ctrl_c_while_the_pen_is_down_lifts_it(tmp_path):
@@ -876,3 +1071,136 @@ def test_ctrl_c_at_the_first_prompt_of_a_plot_stops_without_a_traceback(tmp_path
     assert session.run(["plot", plot]) == 130
     assert "Stopped." in session.output
     assert session.runs == 0
+
+
+# After a finished layer the saved pause is old news: it must never be offered for resuming.
+
+def test_a_finished_layer_deletes_the_old_pause_so_it_is_not_offered_for_resuming(tmp_path):
+    plot, first, session = _pause_in_layer_one(tmp_path, ["", "", "r", KeyboardInterrupt()])
+    saved_when_asked_for_the_red_pen = []
+    session.when_prompted("Load the red pen",
+                          lambda s: saved_when_asked_for_the_red_pen.append(_nothing_saved(tmp_path)))
+    assert session.run(["plot", plot]) == 130, session.output  # Ctrl+C at "Load the red pen"
+    assert "Layer 1 done." in session.output
+    assert saved_when_asked_for_the_red_pen == [True]
+    assert _nothing_saved(tmp_path)
+    assert ("Nothing to resume: the layers so far are finished. "
+            "To plot the remaining colors, prepare a job with only those colors.") in session.output
+    assert "--resume" not in session.output and "Progress is saved" not in session.output
+    assert "Stopped. The motors are off" in session.output
+
+    later = Session([])  # and --resume says there is nothing, instead of redrawing the tail of layer 1
+    assert later.run(["plot", plot, "--resume"]) == 2
+    assert "not found" in later.output and later.runs == 0
+
+
+def test_stopping_after_a_finished_layer_when_the_next_one_finds_no_plotter_says_nothing_to_resume(tmp_path):
+    plot = make_plot(tmp_path)
+    session = Session(["", "", "", "q"], runner_ebbs=[FakeEBB(), None])
+    assert session.run(["plot", plot]) == 1, session.output
+    assert "Nothing to resume: the layers so far are finished." in session.output
+    assert "--resume" not in session.output
+    assert _nothing_saved(tmp_path)
+
+
+def test_stopping_with_nothing_drawn_does_not_claim_finished_layers(tmp_path):
+    plot = make_plot(tmp_path)
+    session = Session(["", "", "q"], runner_ebbs=[None])
+    assert session.run(["plot", plot]) == 1, session.output
+    assert "Nothing to resume" not in session.output
+
+
+def test_stopping_a_resume_before_it_starts_leaves_the_saved_progress_and_says_so(tmp_path):
+    plot = _stop_a_paused_plot(tmp_path)
+    later = Session(["", KeyboardInterrupt()])  # Ctrl+C at "Load the black pen"
+    assert later.run(["plot", plot, "--resume"]) == 130, later.output
+    assert later.runs == 0
+    assert _resume_file(tmp_path).exists() and _resume_json(tmp_path).exists()
+    assert f"Progress is saved in {_resume_file(tmp_path)}." in later.output
+    assert "Nothing to resume" not in later.output
+
+
+def test_a_pause_in_the_second_layer_saves_that_layer_not_the_first(tmp_path):
+    plot = make_plot(tmp_path)
+    second = FakeEBB()
+    session = Session(["", "", "", "q"], runner_ebbs=[FakeEBB(), second])
+    session.press_ctrl_c_at(second, MID_STROKE)
+    assert session.run(["plot", plot]) == 1, session.output
+    assert paused_layer(_resume_file(tmp_path).read_text(encoding="utf-8")) == 2
+    assert "--resume" in session.output and "Nothing to resume" not in session.output
+    later = Session(["", ""], runner_ebbs=[FakeEBB()])
+    assert later.run(["plot", plot, "--resume"]) == 0, later.output
+    assert [(call.kind, call.layer) for call in later.calls] == [("resume", 2)]  # no layer 1 again
+    assert _nothing_saved(tmp_path)
+
+
+# Ctrl+C that repeats, or lands in the middle of the pause itself, must never leave the plotter plotting.
+
+def _worker_threads_gone(before, wait=2.0) -> bool:
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        if not [t for t in threading.enumerate() if t not in before and t.is_alive()]:
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def _snapshot():
+    return set(threading.enumerate()), signal.getsignal(signal.SIGINT)
+
+
+def _assert_paused_cleanly(session, plot_dir, ebb, snapshot):
+    threads_before, sigint_before = snapshot
+    assert ebb.closed
+    assert ebb.pen_cmds[-1][0] == "up"  # the pen is off the paper
+    assert _worker_threads_gone(threads_before)  # the engine's thread has really finished
+    saved = _resume_file(plot_dir).read_text(encoding="utf-8")  # and the progress is on disk, current
+    assert paused_layer(saved) == 1
+    assert paused_origin(saved) != (0.0, 0.0)
+    assert not list(plot_dir.glob("*.tmp"))  # saved by replacing the file, no scratch copy left behind
+    assert signal.getsignal(signal.SIGINT) is sigint_before  # Ctrl+C is back to normal
+    assert "Traceback" not in session.output
+
+
+def test_a_held_ctrl_c_pauses_once_and_saves_the_progress(tmp_path):
+    plot, first, session = _pause_in_layer_one(tmp_path, ["", "", "q"])
+    session.press_ctrl_c_at(first, MID_STROKE, presses=8)  # a key repeating
+    before = _snapshot()
+    assert session.run(["plot", plot]) == 1, session.output
+    _assert_paused_cleanly(session, tmp_path, first, before)
+    assert session.times_asked("Paused.") == 1
+
+
+def test_a_ctrl_c_inside_the_pause_request_is_noted_not_raised(tmp_path):
+    plot, first, session = _pause_in_layer_one(tmp_path, ["", "", "q"])
+    session.interrupt_inside_pause = True
+    before = _snapshot()
+    assert session.run(["plot", plot]) == 1, session.output
+    _assert_paused_cleanly(session, tmp_path, first, before)
+
+
+def test_a_pause_request_taken_down_by_a_ctrl_c_is_made_again(tmp_path):
+    plot, first, session = _pause_in_layer_one(tmp_path, ["", "", "q"])
+    session.pause_failures = 2
+    before = _snapshot()
+    assert session.run(["plot", plot]) == 1, session.output
+    _assert_paused_cleanly(session, tmp_path, first, before)
+
+
+def test_a_held_ctrl_c_while_going_home_pauses_that_too_and_the_menu_comes_back(tmp_path):
+    plot, first, session = _pause_in_layer_one(tmp_path, ["", "", "h", "q"])
+    home = FakeEBB()
+    session.runner_ebbs.append(home)
+    session.press_ctrl_c_at(home, 3, presses=5)
+    assert session.run(["plot", plot]) == 1, session.output
+    assert session.times_asked("Paused.") == 2
+    assert "Stopped before the pen reached Home." in session.output
+    assert home.closed and "down" not in session.pen_commands(home)
+    assert paused_layer(_resume_file(tmp_path).read_text(encoding="utf-8")) == 1
+
+
+def test_ctrl_c_at_the_menu_after_a_held_ctrl_c_is_still_just_a_stop(tmp_path):
+    plot, first, session = _pause_in_layer_one(tmp_path, ["", "", KeyboardInterrupt()])
+    session.press_ctrl_c_at(first, MID_STROKE, presses=4)
+    assert session.run(["plot", plot]) == 130, session.output
+    assert _resume_file(tmp_path).exists() and "--resume" in session.output

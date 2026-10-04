@@ -90,6 +90,8 @@ class Session:
         self.connect_failures = connect_failures
         self.engine_ebbs = []  # the EBB each engine run actually used (None = no plotter)
         self.calls = []  # what the CLI asked the engine for, as EngineCall(kind, layer, svg)
+        self.interrupt_inside_pause = False  # the next pause request first gets another Ctrl+C...
+        self.pause_failures = 0  # ...and this many pause requests fail with a Ctrl+C before one works
         self.runners = []
         self.prompts = []
         self.output = ""
@@ -106,13 +108,16 @@ class Session:
         """Call action(session) when a prompt containing text is shown (before it is answered)."""
         self._hooks.append([text, action, once])
 
-    def press_ctrl_c_at(self, ebb, move):
-        """On `ebb`'s move number `move`, press Ctrl+C in the main thread, and hold the fake plotter
-        still until the CLI has asked the engine to pause (like a person's slow finger)."""
+    def press_ctrl_c_at(self, ebb, move, presses=1):
+        """From `ebb`'s move number `move`, press Ctrl+C in the main thread (`presses` times, on
+        consecutive moves, like a held key repeating), then hold the fake plotter still until the CLI
+        has asked the engine to pause (a person's slow reaction)."""
+        last = move + presses - 1
 
         def on_sm(count):
-            if count == move:
+            if move <= count <= last:
                 _thread.interrupt_main()
+            if count == last:
                 self._pause_requested.wait(5)
 
         ebb.on_sm = on_sm
@@ -148,7 +153,15 @@ class Session:
                 self.options.port = session.plotter  # EMS then uses this "port", not a real one
                 return super().connect()
 
-        return Plotter(factory=lambda: FakeInteractiveAxiDraw(user_message_fun=lambda text: None))
+        plotter = Plotter(factory=lambda: FakeInteractiveAxiDraw(user_message_fun=lambda text: None))
+        real_request_pause = plotter.request_pause
+
+        def request_pause():
+            session._pause_requested.set()
+            real_request_pause()
+
+        plotter.request_pause = request_pause
+        return plotter
 
     def _make_runner(self, *args, **kwargs):
         session = self
@@ -173,6 +186,12 @@ class Session:
         real_pause, real_run, real_return_home = runner.pause, runner.run, runner.return_home
 
         def pause():
+            if session.interrupt_inside_pause:
+                session.interrupt_inside_pause = False
+                _thread.interrupt_main()  # another Ctrl+C lands while the pause is being requested
+            if session.pause_failures > 0:
+                session.pause_failures -= 1
+                raise KeyboardInterrupt  # ...or even takes the pause request down with it
             real_pause()
             session._pause_requested.set()
 
