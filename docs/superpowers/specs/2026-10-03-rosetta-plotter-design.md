@@ -147,7 +147,7 @@ A step bar across the top reads **1 Plotter → 2 Material → 3 Artwork → 4 P
 
 ### Step 4 — Pen
 1. "Put your pen in the holder," with an illustration. Buttons: **Raise pen** and **Lower pen**.
-2. **Pen-height slider** (pen-down height, 0–100%). Dragging it moves the real pen live through the engine's interactive context.
+2. **Pen-height slider** (pen-down height, 0–80%; the cap keeps at least 20% of servo travel between pen down and pen up). Dragging it moves the real pen live through the engine's interactive context.
    - Pen-up height is `max(60, down + 20)`, capped at 100. It can be changed under Advanced.
 3. **Optional test mark:** a 10 mm line drawn just inside the paper's corner nearest Home.
 4. **Pen type cards.** Each sets the pen-down speed (percent of maximum). Pen-up speed is 75% for all. These starting values get tuned during hardware testing:
