@@ -6,7 +6,7 @@
 
 **Architecture:** The pure-Python modules under `src/rosetta/` do the "translator" work from the spec (§6.2): normalize, inline CSS, flatten via the EMS digest parser, place, clip, and group by color. `src/rosetta/engine/` wraps the unmodified EMS `pyaxidraw` 3.9.6 API for plotting, previews, and interactive moves. Everything is in millimetres in the machine frame (spec §4). The CLI is a thin layer over these modules, and the Plan 2 UI will call the same functions.
 
-**Tech Stack:** Python 3.12 (`py -3.12`, already installed at `C:\Users\leona\Python312`), EMS AxiDraw API 3.9.6 (`pyaxidraw`, `axidrawinternal`, `plotink`, `ink_extensions`), lxml, tinycss2, PyMuPDF, pytest. Windows PowerShell commands.
+**Tech Stack:** Python 3.12 at `C:\Users\leona\AppData\Local\Programs\Python\Python312\python.exe` (this machine's `py -3.12` launcher entry is stale), with the EMS-tested engine dependencies pinned in `constraints.txt`. Also EMS AxiDraw API 3.9.6 (`pyaxidraw`, `axidrawinternal`, `plotink`, `ink_extensions`), lxml, tinycss2, PyMuPDF, pytest. Windows PowerShell commands.
 
 **Spec:** `docs/superpowers/specs/2026-10-03-rosetta-plotter-design.md`
 
@@ -209,6 +209,8 @@ This test pins down every EMS internal the core relies on. If a future EMS updat
 If this fails after an EMS update, compare the failing name with the new EMS source
 before changing any Rosetta code.
 """
+from importlib.metadata import version
+
 from axidrawinternal import digest_svg, plot_warnings
 from ink_extensions import simpletransform
 from plotink import ebb_motion, ebb_serial, plot_utils
@@ -217,6 +219,13 @@ from pyaxidraw import axidraw
 
 def test_engine_version_is_pinned():
     assert axidraw.AxiDraw().version_string == "3.9.6"
+
+
+def test_engine_dependencies_match_ems_tested_versions():
+    # Name checks can't catch version drift; constraints.txt pins these to EMS's tested set.
+    assert version("plotink") == "1.9.0"
+    assert version("ink_extensions") == "2.0.0"
+    assert version("pyserial") == "3.5"
 
 
 def test_internal_attributes_used_by_runner():
@@ -250,7 +259,7 @@ def test_helpers_used_by_plotter_and_flatten():
 - [ ] **Step 2: Run it**
 
 Run: `.venv\Scripts\python -m pytest tests\test_engine_contract.py -v`
-Expected: `3 passed`.
+Expected: `4 passed`.
 - If only `test_engine_version_is_pinned` fails because the version is newer and the other two pass, the newer engine is compatible. Change the expected string to the installed version and update the version in spec §3.
 - If either of the other two fails, stop. Report the missing name to Adam before going further.
 
@@ -3449,7 +3458,7 @@ Expected: `4 passed`
 - [ ] **Step 5: Run the whole suite**
 
 Run: `.venv\Scripts\python -m pytest -v`
-Expected: `114 passed`
+Expected: `115 passed`
 
 - [ ] **Step 6: Commit**
 
