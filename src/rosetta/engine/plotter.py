@@ -4,6 +4,9 @@ Uses the EMS interactive context. EMS assumes the pen is at Home (0, 0) when con
 succeeds, so set_home() reconnects, and release_for_plot() returns Home before a plot
 run takes over (spec §6.1).
 """
+import dataclasses
+from enum import Enum
+
 from plotink import ebb_motion, ebb_serial
 
 from rosetta.engine.identity import Identity, decode_nickname, encode_nickname
@@ -12,6 +15,20 @@ from rosetta.models import get_model
 
 MIN_FIRMWARE_FOR_NICKNAME = "2.5.5"
 EMS_UNITS_MM = 2
+
+# Hand-placed Home can be a few mm off; never drive the last millimetre toward the far stops.
+REACH_SAFETY_MM = 1.0
+
+
+class PlotterStopped(Exception):
+    """The plotter stopped mid-move (pause button or lost USB); its position is no longer known."""
+
+
+class IdentityWrite(Enum):
+    WRITTEN = "written"
+    FIRMWARE_TOO_OLD = "firmware_too_old"
+    FIRMWARE_UNKNOWN = "firmware_unknown"  # the firmware version couldn't be read
+    FAILED = "failed"
 
 
 class Plotter:
@@ -32,15 +49,23 @@ class Plotter:
         ad.options.units = EMS_UNITS_MM
         if not ad.connect():
             return False
-        self._ad, self._settings, self._pen_is_down = ad, settings, False
+        self._ad, self._settings, self._pen_is_down = ad, dataclasses.replace(settings), False
         return True
 
     def disconnect(self) -> None:
-        if self._ad is not None:
+        """Raise the pen, then let go of the USB port. Safe to call when not connected."""
+        ad = self._ad
+        if ad is None:
+            return
+        try:
             try:
-                self._ad.disconnect()
-            finally:
-                self._ad = None
+                ad.penup()
+            except Exception:  # best effort: after a USB drop or a stop, EMS can't lift anything
+                pass
+            ad.disconnect()
+        finally:
+            self._ad = None
+            self._pen_is_down = False
 
     def firmware(self) -> str:
         return ebb_serial.queryVersion(self._port()).strip()
@@ -48,23 +73,33 @@ class Plotter:
     def power_ok(self) -> bool:
         return bool(ebb_motion.queryVoltage(self._port(), False))
 
-    def read_identity(self) -> Identity | None:
+    def nickname(self) -> str | None:
+        """The board's nickname as stored, or None if it has none or can't be read."""
         try:
-            nickname = ebb_serial.query_nickname(self._port(), False)
+            return ebb_serial.query_nickname(self._port(), False) or None
         except (UnicodeDecodeError, OSError):  # a foreign, non-ASCII nickname or a flaky port
             return None
+
+    def read_identity(self) -> Identity | None:
+        nickname = self.nickname()
         return decode_nickname(nickname) if nickname else None
 
-    def write_identity(self, identity: Identity) -> bool:
-        """Store the model on the plotter. The board reboots, so this session ends."""
-        port = self._port()
-        if not ebb_serial.min_version(port, MIN_FIRMWARE_FOR_NICKNAME):
-            return False
-        written = bool(ebb_serial.write_nickname(port, encode_nickname(identity)))
-        if written:
+    def write_identity(self, identity: Identity) -> IdentityWrite:
+        """Store the model on the plotter. Always ends the session; after a successful write
+        the board reboots — wait a few seconds before reconnecting."""
+        try:
+            port = self._port()
+            firmware_ok = ebb_serial.min_version(port, MIN_FIRMWARE_FOR_NICKNAME)
+            if firmware_ok is None:
+                return IdentityWrite.FIRMWARE_UNKNOWN
+            if not firmware_ok:
+                return IdentityWrite.FIRMWARE_TOO_OLD
+            if not ebb_serial.write_nickname(port, encode_nickname(identity)):
+                return IdentityWrite.FAILED
             ebb_serial.reboot(port)
-        self._ad = None
-        return written
+            return IdentityWrite.WRITTEN
+        finally:
+            self.disconnect()
 
     def motors_off(self) -> None:
         self.pen_up()
@@ -82,8 +117,18 @@ class Plotter:
         return (x, y)
 
     def goto(self, x: float, y: float) -> None:
+        """Pen-up move to (x, y) mm from Home, kept inside the travel (less a safety margin).
+
+        Raises PlotterStopped if the plotter was paused or lost; EMS would otherwise ignore every
+        later move while still reporting the intended position.
+        """
         travel_x, travel_y = get_model(self._settings.model).travel_mm
-        self._require().moveto(min(max(x, 0.0), travel_x), min(max(y, 0.0), travel_y))
+        x = min(max(x, 0.0), travel_x - REACH_SAFETY_MM)
+        y = min(max(y, 0.0), travel_y - REACH_SAFETY_MM)
+        try:
+            self._checked_move(lambda ad: ad.moveto(x, y))
+        finally:
+            self._pen_is_down = False  # moveto lifts the pen; if it failed, assume up, never down
 
     def jog(self, dx: float, dy: float) -> None:
         x, y = self.position()
@@ -121,7 +166,7 @@ class Plotter:
         """A 10 mm line just inside the paper corner nearest Home, then back Home."""
         self.pen_up()
         self.goto(corner_x + 5, corner_y + 5)
-        self._require().lineto(corner_x + 15, corner_y + 5)
+        self._checked_move(lambda ad: ad.lineto(corner_x + 15, corner_y + 5))
         self._pen_is_down = True
         self.pen_up()
         self.goto(0.0, 0.0)
@@ -136,6 +181,16 @@ class Plotter:
         if self._ad is None:
             raise RuntimeError("Not connected to a plotter.")
         return self._ad
+
+    def _checked_move(self, move) -> None:
+        """Run move(ad); turn "the plotter stopped or is gone" into PlotterStopped."""
+        ad = self._require()
+        try:
+            move(ad)
+        except RuntimeError as lost:  # EMS: "Not connected to AxiDraw" after a USB drop
+            raise PlotterStopped("Lost the connection to the plotter.") from lost
+        if ad.plot_status.stopped:  # 102 pause button, 104 lost USB: EMS now ignores moves
+            raise PlotterStopped("The plotter was paused or stopped before the move finished.")
 
     def _port(self):
         return self._require().plot_status.port

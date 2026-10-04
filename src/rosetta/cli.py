@@ -17,7 +17,7 @@ from pathlib import Path
 from rosetta.compose import Material, PlacedPiece, Placement, compose_job, initial_placement
 from rosetta.engine.identity import Identity
 from rosetta.engine.options import PEN_DOWN_MAX, PlotSettings
-from rosetta.engine.plotter import Plotter
+from rosetta.engine.plotter import IdentityWrite, Plotter, PlotterStopped
 from rosetta.engine.runner import PlotOutcome, PlotRunner, estimate, set_resume_origin_home
 from rosetta.errors import ImportProblem
 from rosetta.loader import load_artwork
@@ -134,11 +134,17 @@ def cmd_identify(args) -> int:
     if not plotter.connect(PlotSettings(model=args.model)):
         print("No plotter found. Plug in the USB cable and the power adapter.")
         return 1
-    if plotter.write_identity(Identity(args.model, args.penlift, args.label)):
-        print(f"Saved: this plotter is an {get_model(args.model).name}. It restarts now.")
+    result = plotter.write_identity(Identity(args.model, args.penlift, args.label))  # ends the session
+    if result is IdentityWrite.WRITTEN:
+        print(f"Saved: this plotter is an {get_model(args.model).name}. It restarts now; "
+              "wait a few seconds before using it again.")
         return 0
-    plotter.disconnect()
-    print("This plotter's firmware is too old to store its model (needs 2.5.5 or newer).")
+    if result is IdentityWrite.FIRMWARE_TOO_OLD:
+        print("This plotter's firmware is too old to store its model (needs 2.5.5 or newer).")
+    elif result is IdentityWrite.FIRMWARE_UNKNOWN:
+        print("Could not read this plotter's firmware version, so its model was not stored. Try again.")
+    else:
+        print("The plotter did not accept the model. Check the USB cable and try again.")
     return 1
 
 
@@ -151,6 +157,9 @@ def cmd_trace(args) -> int:
         return 1
     try:
         plotter.trace(tuple(meta["ink_bbox"]))
+    except PlotterStopped as stopped:
+        print(f"{stopped} Slide the pen back Home before the next try.")
+        return 1
     finally:
         plotter.disconnect()
     print("Traced the outline and returned Home.")

@@ -1,6 +1,9 @@
 import json
 
+import pytest
+
 from rosetta.cli import format_duration, main
+from rosetta.engine.plotter import IdentityWrite, PlotterStopped
 from tests import samples
 
 
@@ -65,3 +68,60 @@ def test_pen_down_outside_the_safe_range_is_refused(tmp_path, capsys):
 
     with pytest.raises(SystemExit):
         main(["estimate", str(tmp_path / "x.svg"), "--pen-down", "95"])
+
+
+class _StubPlotter:
+    """Stands in for rosetta.engine.plotter.Plotter, so the CLI's messages can be checked."""
+
+    identity_result = None
+    trace_error = None
+    instances = []
+
+    def __init__(self):
+        self.disconnected = False
+        _StubPlotter.instances.append(self)
+
+    def connect(self, settings):
+        return True
+
+    def write_identity(self, identity):
+        self.disconnected = True  # the real one always ends the session
+        return _StubPlotter.identity_result
+
+    def trace(self, rect):
+        if _StubPlotter.trace_error:
+            raise _StubPlotter.trace_error
+
+    def disconnect(self):
+        self.disconnected = True
+
+
+@pytest.mark.parametrize("result, code, words", [
+    (IdentityWrite.WRITTEN, 0, "Saved"),
+    (IdentityWrite.FIRMWARE_TOO_OLD, 1, "too old"),
+    (IdentityWrite.FIRMWARE_UNKNOWN, 1, "Could not read"),
+    (IdentityWrite.FAILED, 1, "did not accept"),
+])
+def test_identify_says_what_happened(monkeypatch, capsys, result, code, words):
+    _StubPlotter.instances.clear()
+    _StubPlotter.identity_result = result
+    monkeypatch.setattr("rosetta.cli.Plotter", _StubPlotter)
+    assert main(["identify", "--model", "5", "--label", "PSU Lab"]) == code
+    assert words in capsys.readouterr().out
+    assert _StubPlotter.instances[0].disconnected
+
+
+def test_trace_that_is_paused_does_not_claim_to_be_home(tmp_path, monkeypatch, capsys):
+    out = tmp_path / "plot"
+    main(["prepare", str(_job(tmp_path)), "-o", str(out)])
+    capsys.readouterr()
+    _StubPlotter.instances.clear()
+    _StubPlotter.trace_error = PlotterStopped("The plotter was paused or stopped before the move finished.")
+    monkeypatch.setattr("rosetta.cli.Plotter", _StubPlotter)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    assert main(["trace", str(out.with_suffix(".svg"))]) == 1
+    text = capsys.readouterr().out
+    assert "paused or stopped" in text
+    assert "returned Home" not in text
+    assert _StubPlotter.instances[0].disconnected
+    _StubPlotter.trace_error = None

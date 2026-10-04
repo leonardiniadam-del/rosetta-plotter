@@ -85,6 +85,39 @@ class FakeEBB:
         self.closed = True
 
 
+class IFakeEBB(FakeEBB):
+    """FakeEBB plus what the interactive Plotter also asks: firmware version, nickname, reboot."""
+
+    def __init__(self, version="2.8.1", nickname="", **kw):
+        super().__init__(**kw)
+        self.version = version
+        self.nickname = nickname
+
+    def write(self, data):
+        if self.dead:
+            return super().write(data)
+        cmd = data.decode("ascii").strip()
+        name = cmd.split(",")[0].upper()
+        if name == "V":
+            self.log.append(cmd)
+            self.replies += [f"EBBv13_and_above EB Firmware Version {self.version}\r\n".encode()]
+            return
+        if name == "QT":
+            self.log.append(cmd)
+            self.replies += [(self.nickname + "\r\n").encode(), b"OK\r\n"]
+            return
+        if name == "ST":
+            self.log.append(cmd)
+            self.nickname = cmd.split(",", 1)[1]
+            self.replies += [b"OK\r\n"]
+            return
+        if name == "RB":
+            self.log.append(cmd)
+            self.replies += [b"OK\r\n"]
+            return
+        super().write(data)
+
+
 class _NoSleepTime:
     """The time module, except that sleep() returns at once."""
 
@@ -134,6 +167,17 @@ def fake_factory(ebb):
         return FakeAxiDraw()
 
     return make
+
+
+def interactive_factory(ebb):
+    """A Plotter factory: each call builds a real EMS AxiDraw whose interactive connect() uses `ebb`."""
+
+    class FakeInteractiveAxiDraw(axidraw.AxiDraw):
+        def connect(self):
+            self.options.port = ebb  # EMS then uses this "port" instead of looking for a real EBB
+            return super().connect()
+
+    return lambda: FakeInteractiveAxiDraw()
 
 
 def layered_svg(layers=3, n=8):
