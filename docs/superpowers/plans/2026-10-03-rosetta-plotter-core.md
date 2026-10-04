@@ -3814,14 +3814,14 @@ This is the spec §11.4 checklist, run through the CLI. Record the results in `d
 
 - [ ] **Step 1: Identify the plotter**
 
-Plug in USB and power, then run:
+Plug in the USB cable and the power adapter, then run:
 ```powershell
 .venv\Scripts\rosetta-plot info
 ```
-Expected: firmware, `Power adapter: OK`, and `Model: unknown`.
-- Find the model with spec §12: read the label, or measure the travel. SE/A1 is model 5, SE/A2 model 6, V3 XLX model 3.
-- Then run `.venv\Scripts\rosetta-plot identify --model N --label "PSU Lab"`.
-- Run `info` again. Expected: the model name.
+Expected: the firmware version, `Power adapter: OK`, and `Model: unknown` (or a name some other software stored).
+- Find the model with spec §12: read the label, or measure the travel. SE/A1 is model 5, SE/A2 is model 6, V3 XLX is model 3.
+- Run `.venv\Scripts\rosetta-plot identify --model N --label "PSU Lab"`. If it shows an existing name, type `y` to replace it.
+- Wait a few seconds while the board restarts, then run `info` again. Expected: the model name.
 
 - [ ] **Step 2: Prepare a measurable test job**
 
@@ -3843,28 +3843,42 @@ Run:
 ```
 Expected: `2 pen colors` (red, then black), plus a time per layer.
 
-- [ ] **Step 3: Trace and plot**
+- [ ] **Step 3: Set the pen height**
 
-1. Tape Letter paper with its corner exactly at the Home corner.
-2. Run `.venv\Scripts\rosetta-plot trace out\plot.svg --pen-down 30`. Check that the pen outlines the region from (20, 20) to (120, 140) mm.
-3. Run `.venv\Scripts\rosetta-plot plot out\plot.svg --pen-down 30` and follow the prompts.
-   - During the red layer, press **Ctrl+C**, choose `r`, and confirm it resumes cleanly.
-   - Press the plotter's physical pause button once and confirm the same.
+1. Tape Letter paper with its corner exactly at the Home corner (next to the HOME label and the USB port).
+2. Run `.venv\Scripts\rosetta-plot pen --model N --pen-down 30 --mark 0 0`.
+   - The tool checks the power and the plotter's stored model, then switches the motors off. Slide the pen Home when asked.
+   - With the pen lowered, check it just touches the paper.
+3. Repeat with a different `--pen-down` (0–80; lower numbers sit lower) until a test line draws cleanly. Use that value below.
 
-- [ ] **Step 4: Measure and log**
+- [ ] **Step 4: Trace and plot**
+
+1. Run `.venv\Scripts\rosetta-plot trace out\plot.svg --pen-down P`. Check that the pen outlines the region from (20, 20) to (120, 140) mm, then returns Home.
+2. Run `.venv\Scripts\rosetta-plot plot out\plot.svg --pen-down P` and follow the prompts.
+   - **Ctrl+C:** during the red layer, press **Ctrl+C**. At the menu type `r` and confirm it resumes cleanly.
+   - **Physical pause button:** press it once and confirm the same menu appears. This time type `h`, check the pen goes Home, then press Enter to resume.
+   - **Stopping and finishing later:** on a second sheet, pause during the red layer and type `q`. The tool turns the motors off and saves `out\plot.resume.svg`.
+     - Slide the pen Home.
+     - Run `.venv\Scripts\rosetta-plot plot out\plot.svg --pen-down P --resume` and confirm it finishes the red layer and then the black layer.
+     - Don't re-run `prepare` between stopping and resuming.
+
+- [ ] **Step 5: Measure, then test unplugging**
 
 With a ruler:
-- the square's left and top edges should be 20 mm from the paper edges (±1 mm);
+- the square's left edge and its edge nearest the machine should each be 20 mm from the paper edges (±1 mm);
 - each side should be 100 mm (±1 mm);
-- the black line should sit 140 mm from the top edge.
+- the black line should sit 140 mm from the paper edge nearest the machine.
 
 Then test unplugging:
-- Repeat the plot, unplug USB mid-red, and follow the prompts (replug, slide Home, Enter).
-- Confirm the plot continues where it stopped.
+- Plot again on a fresh sheet.
+- Unplug the USB cable mid-red and follow the prompts: replug, press Enter (the motors switch off), slide the pen Home, press Enter.
+- Confirm the plot continues where it stopped. Note any visible gap at the restart point (see `docs/superpowers/plan2-notes.md`).
 
-Write each result (pass/fail plus the measurements) into `docs/hardware-log.md` with the date and model.
+Also note whether the laptop stayed awake for the whole plot.
 
-- [ ] **Step 5: Commit**
+Write each result (pass/fail plus the measurements) into `docs/hardware-log.md` with the date, the model, and the pen-down value.
+
+- [ ] **Step 6: Commit**
 
 ```powershell
 git add docs\hardware-log.md
