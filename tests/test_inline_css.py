@@ -94,3 +94,9 @@ def test_inline_css_is_idempotent():
     first = root.find(f"{{{SVG}}}rect").get("style")
     inline_css(root)
     assert root.find(f"{{{SVG}}}rect").get("style") == first
+
+
+def test_clip_path_and_mask_survive_for_the_problem_checker():
+    root = _root('<style>.m{clip-path:url(#c);mask:url(#m)}</style><g class="m"/>')
+    inline_css(root)
+    assert _style(root.find(f"{{{SVG}}}g")) == {"clip-path": "url(#c)", "mask": "url(#m)"}

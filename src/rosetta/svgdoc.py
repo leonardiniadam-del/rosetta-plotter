@@ -138,10 +138,12 @@ _SIMPLE_SELECTOR = re.compile(r"^(?P<tag>[A-Za-z][\w-]*)?(?P<rest>(?:[.#][\w-]+)
 
 # The only style properties the EMS parser reads (axidrawinternal digest_svg.inherit_style).
 EMS_STYLE_PROPERTIES = ("fill", "stroke", "fill-rule", "visibility", "display")
+# Kept so the problem checker can still see masks set through CSS; EMS ignores them.
+CHECKED_STYLE_PROPERTIES = ("clip-path", "mask")
 
 
 def inline_css(root: etree._Element) -> None:
-    """Rewrite each element's style as just the properties the EMS parser reads.
+    """Rewrite each element's style as just the properties the EMS parser reads (plus masks, for the problem checker).
 
     Merges <style> rules (simple selectors only: tag, .class, #id, and combinations like
     path.cls-1; others are skipped) with the element's own style, which wins. The EMS parser
@@ -180,7 +182,9 @@ def inline_css(root: etree._Element) -> None:
         kept = {
             key: value
             for key, value in merged.items()
-            if key in EMS_STYLE_PROPERTIES and ";" not in value and ":" not in value
+            if key in EMS_STYLE_PROPERTIES + CHECKED_STYLE_PROPERTIES
+            and ";" not in value
+            and ":" not in value
         }
         if kept:
             element.set("style", ";".join(f"{key}:{value}" for key, value in kept.items()))
