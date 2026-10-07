@@ -101,6 +101,11 @@ class Plotter:
         except (UnicodeDecodeError, OSError):  # a foreign, non-ASCII nickname or a flaky port
             return None
 
+    def port_name(self) -> str | None:
+        """The serial port's name (e.g. "COM3"), or None if it can't be told."""
+        port = self._port()
+        return port if isinstance(port, str) else getattr(port, "port", None)
+
     def read_identity(self) -> Identity | None:
         nickname = self.nickname()
         return decode_nickname(nickname) if nickname else None

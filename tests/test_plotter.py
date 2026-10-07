@@ -507,3 +507,8 @@ def test_real_ems_lost_usb_cable_during_a_trace_is_reported(monkeypatch):
             command()
     plotter.disconnect()
     assert ebb.closed
+
+
+def test_port_name_reads_the_serial_port():
+    plotter, _fakes = _connected()
+    assert plotter.port_name() == "COM9"  # FakeAD's port is the plain name; a real one is a Serial object
