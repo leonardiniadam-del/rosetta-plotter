@@ -3,7 +3,6 @@ import threading
 
 import pytest
 from lxml import etree
-from plotink import ebb_serial
 from pyaxidraw import axidraw
 
 from rosetta.compose import ColorGroup
@@ -267,9 +266,8 @@ def test_failed_resume_keeps_the_resume_data_and_hides_the_exception_from_the_me
     assert "boom" in result.details
 
 
-def test_resume_with_no_plotter_connected_keeps_the_resume_data(monkeypatch):
+def test_resume_with_no_plotter_connected_keeps_the_resume_data():
     paused, _ = _plot_and_pause()
-    monkeypatch.setattr(ebb_serial, "openPort", lambda: None)  # never touch a real plotter
     result = PlotRunner().run(paused.resume_svg, 1, SETTINGS, resume=True)
     assert result.outcome is PlotOutcome.NOT_CONNECTED
     assert result.resume_svg == paused.resume_svg
@@ -370,9 +368,8 @@ def test_return_home_without_a_paused_plot_is_an_error_and_keeps_the_input():
     assert "no paused plot" in result.message.lower()
 
 
-def test_return_home_with_no_plotter_connected_keeps_the_resume_data(monkeypatch):
+def test_return_home_with_no_plotter_connected_keeps_the_resume_data():
     paused, _ = _plot_and_pause()
-    monkeypatch.setattr(ebb_serial, "openPort", lambda: None)  # never touch a real plotter
     result = PlotRunner().return_home(paused.resume_svg, SETTINGS)
     assert result.outcome is PlotOutcome.NOT_CONNECTED
     assert result.resume_svg == paused.resume_svg

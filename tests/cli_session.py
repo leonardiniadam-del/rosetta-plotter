@@ -5,7 +5,7 @@ Session.run(argv) calls rosetta.cli.main with:
   * every plotter the CLI opens being a real EMS engine talking to a fake EBB (tests/fake_ebb.py),
   * a "Ctrl+C" you can press from inside a plot (press_ctrl_c_at),
   * everything the CLI prints, and every prompt and answer, collected in session.output.
-No test here can touch a real plotter: EMS's port search is switched off.
+No test here can touch a real plotter: tests/conftest.py switches EMS's port search off.
 """
 import _thread
 import builtins
@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 from lxml import etree
-from plotink import ebb_serial
 from pyaxidraw import axidraw
 
 from rosetta import cli
@@ -212,7 +211,6 @@ class Session:
         self._out = io.StringIO()
         with pytest.MonkeyPatch.context() as patch:
             skip_engine_waits(patch)
-            patch.setattr(ebb_serial, "openPort", lambda: None)  # never touch a real plotter
             patch.setattr(builtins, "input", self._input)
             patch.setattr(cli, "Plotter", self._make_plotter)
             patch.setattr(cli, "PlotRunner", self._make_runner)

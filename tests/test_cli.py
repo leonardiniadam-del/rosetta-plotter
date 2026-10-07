@@ -77,8 +77,6 @@ def test_unreadable_plot_is_reported_not_raised(tmp_path, capsys):
 
 
 def test_pen_down_outside_the_safe_range_is_refused(tmp_path, capsys):
-    import pytest
-
     with pytest.raises(SystemExit):
         main(["estimate", str(tmp_path / "x.svg"), "--pen-down", "95"])
 
@@ -175,17 +173,21 @@ def test_trace_without_a_bounding_box_says_to_prepare_again(tmp_path, capsys):
 
 
 class _StubPlotter:
-    """Stands in for rosetta.engine.plotter.Plotter, so the CLI's messages can be checked."""
+    """Stands in for rosetta.engine.plotter.Plotter, so the CLI's messages can be checked.
+
+    Use it through the stub_plotter fixture, which makes a fresh subclass for each test: a test sets
+    what the plotter will answer (stored, identity_result, trace_error) and reads instances afterwards.
+    """
 
     identity_result = None
     trace_error = None
-    stored = Identity(1, 1, "Lab")
-    instances = []
+    stored = None
+    instances = None
 
     def __init__(self):
         self.disconnected = False
         self.settings = []
-        _StubPlotter.instances.append(self)
+        type(self).instances.append(self)
 
     def connect(self, settings):
         self.settings.append(settings)
@@ -198,21 +200,32 @@ class _StubPlotter:
         return None
 
     def read_identity(self):
-        return _StubPlotter.stored
+        return type(self).stored
 
     def motors_off(self):
         pass
 
     def write_identity(self, identity):
         self.disconnected = True  # the real one always ends the session
-        return _StubPlotter.identity_result
+        return type(self).identity_result
 
     def trace(self, rect):
-        if _StubPlotter.trace_error:
-            raise _StubPlotter.trace_error
+        if type(self).trace_error:
+            raise type(self).trace_error
 
     def disconnect(self):
         self.disconnected = True
+
+
+@pytest.fixture
+def stub_plotter(monkeypatch):
+    """cli.Plotter replaced by a stub class that belongs to this test alone."""
+    class Stub(_StubPlotter):
+        stored = Identity(1, 1, "Lab")
+        instances = []
+
+    monkeypatch.setattr(cli, "Plotter", Stub)
+    return Stub
 
 
 @pytest.mark.parametrize("result, code, words", [
@@ -221,39 +234,31 @@ class _StubPlotter:
     (IdentityWrite.FIRMWARE_UNKNOWN, 1, "Could not read"),
     (IdentityWrite.FAILED, 1, "did not accept"),
 ])
-def test_identify_says_what_happened(monkeypatch, capsys, result, code, words):
-    _StubPlotter.instances.clear()
-    _StubPlotter.identity_result = result
-    monkeypatch.setattr("rosetta.cli.Plotter", _StubPlotter)
+def test_identify_says_what_happened(stub_plotter, capsys, result, code, words):
+    stub_plotter.identity_result = result
     assert main(["identify", "--model", "5", "--label", "PSU Lab"]) == code
     assert words in capsys.readouterr().out
-    assert _StubPlotter.instances[0].disconnected
+    assert stub_plotter.instances[0].disconnected
 
 
-def test_identify_connects_with_the_pen_lift_it_is_storing(monkeypatch):
-    _StubPlotter.instances.clear()
-    _StubPlotter.identity_result = IdentityWrite.WRITTEN
-    monkeypatch.setattr("rosetta.cli.Plotter", _StubPlotter)
+def test_identify_connects_with_the_pen_lift_it_is_storing(stub_plotter):
+    stub_plotter.identity_result = IdentityWrite.WRITTEN
     assert main(["identify", "--model", "5", "--penlift", "3"]) == 0
-    settings = _StubPlotter.instances[0].settings[0]
+    settings = stub_plotter.instances[0].settings[0]
     assert (settings.model, settings.penlift) == (5, 3)
 
 
-def test_identify_says_to_wait_for_the_restart(monkeypatch, capsys):
-    _StubPlotter.instances.clear()
-    _StubPlotter.identity_result = IdentityWrite.WRITTEN
-    monkeypatch.setattr("rosetta.cli.Plotter", _StubPlotter)
+def test_identify_says_to_wait_for_the_restart(stub_plotter, capsys):
+    stub_plotter.identity_result = IdentityWrite.WRITTEN
     assert main(["identify", "--model", "5"]) == 0
     assert "Wait a few seconds for it to restart before the next command." in capsys.readouterr().out
 
 
-def test_trace_that_is_paused_does_not_claim_to_be_home(tmp_path, monkeypatch, capsys):
+def test_trace_that_is_paused_does_not_claim_to_be_home(tmp_path, monkeypatch, capsys, stub_plotter):
     out = tmp_path / "plot"
     main(["prepare", str(_job(tmp_path)), "-o", str(out)])
     capsys.readouterr()
-    _StubPlotter.instances.clear()
-    _StubPlotter.trace_error = PlotterStopped("The plotter was paused or stopped before the move finished.")
-    monkeypatch.setattr("rosetta.cli.Plotter", _StubPlotter)
+    stub_plotter.trace_error = PlotterStopped("The plotter was paused or stopped before the move finished.")
     monkeypatch.setattr("builtins.input", lambda prompt="": "")
     assert main(["trace", str(out.with_suffix(".svg"))]) == 1
     text = capsys.readouterr().out
@@ -261,25 +266,22 @@ def test_trace_that_is_paused_does_not_claim_to_be_home(tmp_path, monkeypatch, c
     assert "stopped before the trace finished. Slide the pen Home before plotting." in text
     assert "returned Home" not in text
     # the pre-flight check, the trace, and letting go of the motors afterwards each opened (and closed) the plotter
-    assert len(_StubPlotter.instances) == 3
-    assert all(plotter.disconnected for plotter in _StubPlotter.instances)
-    _StubPlotter.trace_error = None
+    assert len(stub_plotter.instances) == 3
+    assert all(plotter.disconnected for plotter in stub_plotter.instances)
 
 
-def _preflight_with(monkeypatch, stored, **given):
+def _preflight_with(stub_plotter, stored, **given):
     """cli._preflight against a stub plotter that has `stored` as its identity."""
-    _StubPlotter.instances.clear()
-    monkeypatch.setattr("rosetta.cli.Plotter", _StubPlotter)
-    monkeypatch.setattr(_StubPlotter, "stored", stored)
+    stub_plotter.stored = stored
     args = argparse.Namespace(**{"penlift": None, "pen_down": 42, "pen_type": "marker",
                                  "skip_model_check": stored is None, **given})
     return cli._preflight(args, 1)
 
 
-def test_preflight_plots_with_the_jobs_model_and_the_settings_asked_for(monkeypatch):
-    settings = _preflight_with(monkeypatch, Identity(1, 3, "Lab"))
+def test_preflight_plots_with_the_jobs_model_and_the_settings_asked_for(stub_plotter):
+    settings = _preflight_with(stub_plotter, Identity(1, 3, "Lab"))
     assert (settings.model, settings.pen_down, settings.pen_type) == (1, 42, "marker")
-    assert _StubPlotter.instances[0].disconnected
+    assert stub_plotter.instances[0].disconnected
 
 
 @pytest.mark.parametrize("stored, asked, used", [
@@ -289,8 +291,8 @@ def test_preflight_plots_with_the_jobs_model_and_the_settings_asked_for(monkeypa
     (None, None, 1),  # nothing stored, nothing asked: the default
     (None, 2, 2),
 ])
-def test_preflight_pen_lift_is_the_one_asked_for_else_the_stored_one_else_1(monkeypatch, capsys, stored, asked, used):
-    assert _preflight_with(monkeypatch, stored, penlift=asked).penlift == used
+def test_preflight_pen_lift_is_the_one_asked_for_else_the_stored_one_else_1(stub_plotter, capsys, stored, asked, used):
+    assert _preflight_with(stub_plotter, stored, penlift=asked).penlift == used
     said = capsys.readouterr().out
     if stored is not None and asked not in (None, stored.penlift):
         assert f"pen lift {stored.penlift} stored" in said and f"Using {asked}" in said
@@ -308,16 +310,22 @@ def test_identify_help_says_what_pen_lift_3_is(capsys):
 
 def test_ctrl_c_while_waiting_does_not_abandon_the_worker():
     """On Python 3.12 a Ctrl+C inside Thread.join(timeout) can mark a running thread as finished."""
+    interrupted = threading.Event()
+    interrupts = []
     done = []
 
     def work():
-        time.sleep(0.5)
+        _thread.interrupt_main()  # the Ctrl+C, now that the wait is under way (its handler is in place)
+        assert interrupted.wait(5)  # the work goes on only once the Ctrl+C has been dealt with...
+        time.sleep(0.2)  # ...and then for a good while longer
         done.append(True)
         return "finished"
 
-    interrupts = []
-    threading.Timer(0.15, _thread.interrupt_main).start()
-    assert cli._run_interruptibly(work, lambda: interrupts.append(True)) == "finished"
+    def on_interrupt():
+        interrupts.append(True)
+        interrupted.set()
+
+    assert cli._run_interruptibly(work, on_interrupt) == "finished"
     assert interrupts == [True]
     assert done == [True]  # it waited for the work to really end
 
