@@ -6,6 +6,7 @@ import { css, html, LitElement } from "lit";
 import "./controlbar";
 import "./dialogs";
 import "./dock";
+import "./menubar";
 import "./plate";
 import "./statusbar";
 import "./strip";
