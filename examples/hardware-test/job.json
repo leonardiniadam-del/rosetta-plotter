@@ -1,0 +1,5 @@
+{
+  "model": 1,
+  "material": {"x": 0, "y": 0, "width": 215.9, "height": 279.4},
+  "pieces": [{"path": "square.svg", "x": 0, "y": 0}]
+}

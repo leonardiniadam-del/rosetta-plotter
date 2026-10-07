@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import re
+import shutil
 import signal
 import tempfile
 import threading
@@ -17,6 +18,7 @@ from rosetta.cli import PLUG_BACK_IN, format_duration, main
 from rosetta.engine.identity import Identity
 from rosetta.engine.plotter import IdentityWrite, PlotterStopped
 from rosetta.engine.runner import paused_layer
+from rosetta.loader import load_artwork
 from tests import samples
 from tests.cli_session import MID_STROKE, Session, make_plot, new_plotter_ebb, paused_origin
 from tests.fake_ebb import FakeEBB
@@ -1527,6 +1529,36 @@ def test_prepare_without_model_still_needs_one_in_the_job_file(tmp_path, capsys)
     del job["model"]
     assert main(["prepare", str(_write_job(tmp_path, job)), "-o", str(tmp_path / "plot")]) == 2
     assert '"model"' in capsys.readouterr().out
+
+
+HARDWARE_TEST_FOLDER = Path(__file__).resolve().parent.parent / "examples" / "hardware-test"
+
+
+@pytest.mark.parametrize("model", [1, 3, 5, 6])
+def test_the_committed_hardware_test_job_prepares_for_any_machine(tmp_path, capsys, model):
+    folder = tmp_path / "hardware-test"
+    shutil.copytree(HARDWARE_TEST_FOLDER, folder)  # so the log lands here, not in the repository
+    out = tmp_path / "out" / "plot"
+    assert main(["prepare", str(folder / "job.json"), "--model", str(model), "-o", str(out)]) == 0
+    assert "2 pen colors" in capsys.readouterr().out
+    meta = json.loads(out.with_suffix(".json").read_text(encoding="utf-8"))
+    assert meta["model"] == model and meta["clipped"] is False
+    assert [(layer["color"], layer["name"]) for layer in meta["layers"]] == [("#ff0000", "red"), ("#000000", "black")]
+    # the square runs from (20, 20) to (120, 120) mm and the line is at y = 140, as Task 21 measures
+    assert meta["ink_bbox"] == pytest.approx([20, 20, 120, 140], abs=0.01)
+
+
+def test_the_committed_hardware_test_job_is_a_letter_page_with_a_red_square_and_a_black_line():
+    job = json.loads((HARDWARE_TEST_FOLDER / "job.json").read_text(encoding="utf-8"))
+    assert job == {
+        "model": 1,
+        "material": {"x": 0, "y": 0, "width": 215.9, "height": 279.4},
+        "pieces": [{"path": "square.svg", "x": 0, "y": 0}],
+    }
+    art = load_artwork(HARDWARE_TEST_FOLDER / "square.svg")
+    assert (art.width_mm, art.height_mm) == pytest.approx((215.9, 279.4), abs=0.001)
+    assert [(shape.color, shape.filled) for shape in art.shapes] == [("#ff0000", False), ("#000000", False)]
+    assert art.issues == []
 
 
 def test_prepare_model_must_be_a_model_number(tmp_path):
