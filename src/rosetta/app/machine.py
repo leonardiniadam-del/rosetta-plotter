@@ -189,6 +189,100 @@ class Machine:
         self.pen_down, self.pen_type = pen_down, pen_type
         return self.status()
 
+    # Steps 2-5: moves.
+
+    def goto(self, x: float, y: float) -> dict:
+        """Pen-up move to (x, y) mm from Home, kept inside the plotter's reach."""
+        with self._using(MachineState.READY) as plotter:
+            self._check_power(plotter)
+            plotter.goto(float(x), float(y))
+            self.position = plotter.position()
+        return self.status()
+
+    def jog(self, dx: float, dy: float) -> dict:
+        """The Material step's arrow buttons: a pen-up nudge."""
+        with self._using(MachineState.READY) as plotter:
+            self._check_power(plotter)
+            plotter.jog(float(dx), float(dy))
+            self.position = plotter.position()
+        return self.status()
+
+    def pen(self, down: bool) -> dict:
+        """Raise or lower the pen where it is (the Pen step's buttons)."""
+        with self._using(*_KNOWN) as plotter:
+            self._check_power(plotter)
+            if down:
+                plotter.pen_down()
+            else:
+                plotter.pen_up()
+        return self.status()
+
+    def trace(self, rect) -> dict:
+        """Pen up around rect (everything that will be drawn), then Home (spec §5, step 5)."""
+        x0, y0, x1, y1 = (float(value) for value in rect)
+        with self._using(MachineState.READY) as plotter:
+            self._check_power(plotter)
+            plotter.trace((x0, y0, x1, y1))
+            self.position = (0.0, 0.0)
+        return self.status()
+
+    def test_mark(self, corner_x: float, corner_y: float) -> dict:
+        """A 10 mm line just inside the paper corner nearest Home, then back Home (spec §5, step 4)."""
+        with self._using(MachineState.READY) as plotter:
+            self._check_power(plotter)
+            plotter.test_mark(float(corner_x), float(corner_y))
+            self.position = (0.0, 0.0)
+        return self.status()
+
+    # Step 5: handing the plotter to a plot run and taking it back.
+
+    def release_for_plot(self) -> PlotSettings:
+        """Check the power, return Home and let go of the USB port. Returns the settings to plot with:
+        the plot keeps them, so its resume uses the same ones (plan2-notes.md)."""
+        with self._using(MachineState.READY) as plotter:
+            self._check_power(plotter)
+            settings = self.plot_settings()
+            plotter.release_for_plot()
+            self._plotter = None
+            self.state = MachineState.PLOTTING
+        return settings
+
+    def after_plot(self, at_home: bool) -> dict:
+        """Take the plotter back after a plot. at_home: the pen is known to be Home (the plot finished,
+        or it was sent Home); otherwise the motors go off so the pen can be slid Home by hand."""
+        with self._using(MachineState.PLOTTING):
+            plotter = self._new_plotter()
+            if not plotter.connect(self._settings()):
+                self._forget()
+                return self.status()
+            try:
+                if not at_home:
+                    plotter.motors_off()
+            except PlotterStopped:
+                plotter.disconnect()
+                self._forget()
+                return self.status()
+            self._plotter = plotter
+            self.state = MachineState.READY if at_home else MachineState.NOT_HOMED
+            self.position = (0.0, 0.0)
+        return self.status()
+
+    def release_motors(self) -> bool:
+        """While a plot is stopped by a lost cable or an error: switch the motors off so the carriage can
+        be slid Home by hand. False if the plotter can't be reached."""
+        with self._using(MachineState.PLOTTING):
+            plotter = self._new_plotter()
+            try:
+                if not plotter.connect(self._settings()):
+                    return False
+                plotter.motors_off()
+                return True
+            except Exception:  # a plotter that vanishes again is "not released", not a crash
+                logger.info("Couldn't switch the motors off", exc_info=True)
+                return False
+            finally:
+                plotter.disconnect()
+
     # Any time.
 
     def request_stop(self) -> None:

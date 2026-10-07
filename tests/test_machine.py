@@ -123,3 +123,84 @@ def test_shutdown_lets_go(tmp_path):
     machine.set_home()
     machine.shutdown()
     assert machine.state is MachineState.NO_PLOTTER
+
+
+def _ready(tmp_path, **ebb_args):
+    machine, ebb, bench, _store = _plugged(tmp_path, nickname="Lab m1p1", **ebb_args)
+    machine.scan()
+    machine.set_home()
+    return machine, ebb, bench
+
+
+def test_goto_and_jog(tmp_path):
+    machine, _ebb, _bench = _ready(tmp_path)
+    assert machine.goto(50, 20)["position"] == pytest.approx([50, 20])
+    assert machine.jog(-10, 5)["position"] == pytest.approx([40, 25])
+
+
+def test_moves_wait_for_home(tmp_path):
+    machine, _ebb, _bench, _store = _plugged(tmp_path, nickname="m1p1")
+    machine.scan()
+    with pytest.raises(UserProblem, match="HOME label"):
+        machine.goto(10, 10)
+
+
+def test_pen_up_and_down(tmp_path):
+    machine, ebb, _bench = _ready(tmp_path)
+    machine.pen(True)
+    assert ebb.pen_cmds[-1][0] == "down"
+    machine.pen(False)
+    assert ebb.pen_cmds[-1][0] == "up"
+
+
+def test_trace_and_test_mark_end_at_home(tmp_path):
+    machine, ebb, _bench = _ready(tmp_path)
+    machine.goto(30, 30)
+    assert machine.trace((10, 10, 60, 40))["position"] == [0.0, 0.0]
+    moves = ebb.sm
+    assert machine.test_mark(0, 0)["position"] == [0.0, 0.0]
+    assert ebb.sm > moves and any(state == "down" for state, _count in ebb.pen_cmds)
+
+
+def test_a_stopped_move_means_home_is_unknown(tmp_path):
+    machine, _ebb, _bench = _ready(tmp_path, button_after_moves=1)  # the plotter's pause button
+    with pytest.raises(UserProblem, match="stopped before the move finished"):
+        machine.goto(100, 100)
+    assert machine.state is MachineState.NOT_HOMED
+
+
+def test_stop_ends_a_move(tmp_path):
+    machine, ebb, _bench = _ready(tmp_path)
+    ebb.on_sm = lambda count: count == 3 and machine.request_stop()
+    with pytest.raises(UserProblem):
+        machine.goto(200, 150)
+    assert machine.state is MachineState.NOT_HOMED
+
+
+def test_the_plotter_is_handed_over_for_a_plot_and_taken_back(tmp_path):
+    machine, _ebb, _bench = _ready(tmp_path)
+    machine.goto(30, 30)
+    settings = machine.release_for_plot()
+    assert machine.state is MachineState.PLOTTING and settings.model == 1
+    with pytest.raises(UserProblem, match="plotting"):
+        machine.goto(5, 5)
+    assert machine.after_plot(at_home=True)["state"] == "ready"
+    machine.release_for_plot()
+    assert machine.after_plot(at_home=False)["state"] == "not_homed"
+
+
+def test_a_plot_needs_the_power_adapter(tmp_path):
+    machine, ebb, _bench = _ready(tmp_path)
+    ebb.voltage = 0
+    with pytest.raises(UserProblem, match=NO_POWER):
+        machine.release_for_plot()
+    assert machine.state is MachineState.READY
+
+
+def test_motors_can_be_released_while_a_plot_is_stopped(tmp_path):
+    machine, _ebb, bench = _ready(tmp_path)
+    machine.release_for_plot()
+    assert machine.release_motors() is True
+    bench.ebb = None
+    assert machine.release_motors() is False
+    assert machine.state is MachineState.PLOTTING
