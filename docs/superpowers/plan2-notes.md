@@ -25,6 +25,16 @@ These came out of the code reviews while building the core (Plan 1). Each one is
 - **Duplicating a piece.** `Placement` is frozen, so use `dataclasses.replace` when duplicating a piece.
 - **Cap the color count.** Cap the number of pen colors shown to students (EMS documents layers 1–1000). Warn when a file has dozens of colors.
 
+## For Plan 2b (from the Plan 2a final review)
+Left as they are on purpose. The page-facing rules are in docs/bridge.md.
+- **Lock navigation in the WebView.** pywebview injects `js_api` into any page the window navigates to. Keep the window on the app's own page and open every outside link in the system browser.
+- **Drag and drop isn't smoke-tested.** `scripts/smoke_window.py` doesn't cover dropping files on the window; check it by hand.
+- **Size messages are in mm.** Messages from Python name sizes in mm (custom paper "between 0 and 2000 mm", margin "from 0 to 50 mm"). The page should check what the student types in their own units first, so they rarely see these.
+- **Error recovery could be finer later.**
+  - An engine ERROR on a fresh run of pen 2 or later ends the whole plot (there's no resume point yet).
+  - An ERROR during a resume falls back to the older resume point.
+- **A Pause at the instant Return Home starts can be lost.** It's harmless: the pen just reaches Home.
+
 ## Visual direction (from Adam, 2026-10-07): Rhino 8 as the inspiration
 Adam shared a Rhino 8 screenshot as the look for the app. Architecture students already know Rhino, so a familiar look lowers the learning curve. What to borrow:
 - **Canvas.** A single Top-style view: a gray canvas with a fine grid and the world axes drawn from Home (red = X along the rail, green = Y toward the student). It shows the plotter's reach, the paper and the artwork. There's one view, not four viewports.

@@ -16,4 +16,6 @@ Run the app (until the student screens are built it shows a bridge console for t
 
     .venv\Scripts\python -m rosetta.app.main
 
+The bridge console can't answer `close_requested`, so to close it mid-plot, call `quit_confirmed`.
+
 The bridge between Python and the page is documented in docs/bridge.md.
