@@ -305,7 +305,7 @@ These come first in Plan 2b, each test-first.
 | `src/bridge/client.ts` | Waits for `pywebviewready`, calls `window.pywebview.api`, unwraps `ok:false` into a typed error, and serializes hardware calls |
 | `src/bridge/fake.ts` | A simulated plotter and backend with the same contract, for `npm run dev` in a browser and for tests |
 | `src/state/store.ts` | One app state (machine, plot, jobs, pieces, pens, selection, view, units) with subscribe/update. Undo for placement edits |
-| `src/geometry/` | Units and formatting, placement math (matching `rosetta.geometry.place_point`), bounding boxes, snapping, the reference point |
+| `src/geometry/` | Units and formatting, placement math (matching `rosetta.geometry.place_point`), bounding boxes, rotate about center, snapping |
 | `src/canvas/` | The plate: camera (pan/zoom), grid and rulers, reach and paper, pieces (one `<path>` per pen per piece), selection and handles, crosshair, preview animation |
 | `src/ui/` | Lit components: menu bar, control bar, tools column, panels (Jobs, Pens, Plotter), status bar, strip, dialogs (pen change, page picker, plotter model, settings, confirmations, diagnostics) |
 | `src/theme.css` | The dark design tokens (§3) and base control styles |
@@ -317,7 +317,7 @@ These come first in Plan 2b, each test-first.
 - **Vitest, no browser:**
   - **Units** and parsing.
   - **Placement math**, checked against fixtures generated from `rosetta.geometry.place_point`, for 0°, 90°, 180°, 270° and several free angles (15°, 33.5°, 300°), at several scales; rotate-about-center and rotate-paper round trips.
-  - **Snapping**, the reference point, bounding boxes, and the camera transforms.
+  - **Snapping**, rotate about center, bounding boxes, and the camera transforms.
   - **The store,** including undo.
   - **The serialization queue** in the bridge client.
 - **Component tests (Vitest + jsdom), against the fake bridge:**
