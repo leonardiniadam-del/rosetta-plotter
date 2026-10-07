@@ -5,6 +5,7 @@
 import { css, html, LitElement } from "lit";
 import "./controlbar";
 import "./dialogs";
+import "./dock";
 import "./plate";
 import "./statusbar";
 import "./strip";
