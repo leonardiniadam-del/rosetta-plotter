@@ -66,13 +66,21 @@ def test_place_takes_any_angle_and_a_stretch(tmp_path):
 
 @pytest.mark.parametrize("x, y, scale, rotation, scale_y", [
     (float("nan"), 0, 1, 0, None), (0, float("inf"), 1, 0, None), (0, 0, 0, 0, None),
-    (0, 0, -1, 0, None), (0, 0, 1, float("nan"), None), (0, 0, 1, 0, 0), (0, 0, 1, 0, 1000),
+    (0, 0, -1, 0, None), (0, 0, 1, float("nan"), None), (0, 0, 1, 0, 0),
 ])
 def test_bad_placements_are_refused(tmp_path, x, y, scale, rotation, scale_y):
     session, job = _session_with_job(tmp_path)
     piece = session.place_job(job.id, 0, 0)
     with pytest.raises(ValueError):
         session.place(piece.id, x, y, scale, rotation, scale_y)
+
+
+def test_scaling_past_the_limit_is_explained(tmp_path):
+    session, job = _session_with_job(tmp_path)
+    piece = session.place_job(job.id, 0, 0)
+    for scale, scale_y in ((101, None), (1, 1000)):
+        with pytest.raises(UserProblem, match="Drawings can be scaled up to 10000%."):
+            session.place(piece.id, 0, 0, scale, 0, scale_y)
 
 
 def test_duplicate_and_remove_pieces(tmp_path):

@@ -20,6 +20,7 @@ from rosetta.pdf_import import page_count
 DUPLICATE_OFFSET_MM = 10.0
 MAX_SCALE = 100.0
 GONE = "That drawing isn't on the paper anymore."
+TOO_BIG = "Drawings can be scaled up to 10000%."
 JOB_GONE = "That file isn't in the Jobs list anymore."
 
 
@@ -167,8 +168,10 @@ def _checked(placement: Placement) -> Placement:
     if not (math.isfinite(placement.x) and math.isfinite(placement.y)):
         raise ValueError(f"Placement position must be finite: {placement}")
     for scale in (placement.scale, placement.scale if placement.scale_y is None else placement.scale_y):
-        if not (math.isfinite(scale) and 0 < scale <= MAX_SCALE):
-            raise ValueError(f"Placement scale must be above 0 and at most {MAX_SCALE:g}: {placement}")
+        if not (math.isfinite(scale) and scale > 0):
+            raise ValueError(f"Placement scale must be above 0: {placement}")
+        if scale > MAX_SCALE:
+            raise UserProblem(TOO_BIG)  # typed or dragged by the student
     if not math.isfinite(placement.rotation):
         raise ValueError(f"Placement rotation must be a finite number of degrees: {placement}")
     return placement

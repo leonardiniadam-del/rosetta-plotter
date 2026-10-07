@@ -3,7 +3,7 @@
  * the UI tests. It has a pretend plotter (an AxiDraw SE/A1 named "Demo" until `model` is changed), paper and
  * a Jobs list. It doesn't plot; Plan 2b-2 extends it for that.
  */
-import { pieceBox } from "../geometry/placement";
+import { MAX_SCALE, pieceBox } from "../geometry/placement";
 import { normalizeAngle, type Units } from "../geometry/units";
 import type {
   Api,
@@ -51,7 +51,9 @@ const NOT_CONNECTED = "No plotter is connected. Plug in the USB cable and the po
 const NEEDS_MODEL = "Choose which AxiDraw this is first.";
 const NOT_HOMED = "Slide the pen to the corner next to the HOME label and the USB port, then click It's in the corner.";
 const NO_POWER = "The power adapter isn't plugged in. The pen can't move without it.";
-const AFFINITY = "Affinity files can't be opened directly. In Affinity, use File › Export › SVG or PDF, then import that file.";
+const GONE = "That drawing isn't on the paper anymore.";
+export const TOO_BIG = "Drawings can be scaled up to 10000%.";
+const AFFINITY ="Affinity files can't be opened directly. In Affinity, use File › Export › SVG or PDF, then import that file.";
 
 function ok<T extends object>(data: T): { ok: true } & T {
   return { ok: true, ...data };
@@ -100,6 +102,8 @@ export class FakeApi implements Api {
   private readonly hidden = new Set<string>();
   private nextJob = 1;
   private nextPiece = 1;
+  private readonly holds = new Map<string, Promise<void>>();
+  private readonly failures = new Map<string, string>();
 
   /** The arguments of every call to `method`. */
   called(method: string): unknown[][] {
@@ -108,6 +112,29 @@ export class FakeApi implements Api {
 
   private log(method: string, args: unknown[]): void {
     this.calls.push([method, args]);
+  }
+
+  /** Test knob: calls to `method` wait until the returned function is called. */
+  hold(method: string): () => void {
+    let release: () => void = () => {};
+    this.holds.set(method, new Promise<void>((done) => (release = done)));
+    return () => {
+      this.holds.delete(method);
+      release();
+    };
+  }
+
+  /** Test knob: the next call to `method` is refused with `message`. */
+  failNext(method: string, message: string): void {
+    this.failures.set(method, message);
+  }
+
+  private async gate(method: string): Promise<Failure | null> {
+    await this.holds.get(method);
+    const message = this.failures.get(method);
+    if (message === undefined) return null;
+    this.failures.delete(method);
+    return fail(message);
   }
 
   private modelInfo(): ModelInfo | undefined {
@@ -340,10 +367,13 @@ export class FakeApi implements Api {
 
   async piece_place(pieceId: string, x: number, y: number, scale: number, rotation: number, scaleY: number) {
     this.log("piece_place", [pieceId, x, y, scale, rotation, scaleY]);
+    const refused = await this.gate("piece_place");
+    if (refused) return refused;
     const piece = this.pieces.find((p) => p.id === pieceId);
-    if (!piece) return fail("That drawing isn't on the paper anymore.");
+    if (!piece) return fail(GONE);
     const usable = [x, y, scale, rotation, scaleY].every(Number.isFinite) && scale > 0 && scaleY > 0;
     if (!usable) return fail("Something unexpected went wrong.", "ValueError: placement");
+    if (scale > MAX_SCALE || scaleY > MAX_SCALE) return fail(TOO_BIG);
     piece.placement = { x, y, scale, scale_y: scaleY, rotation: normalizeAngle(rotation) };
     return ok({ placement: { ...piece.placement } });
   }
@@ -351,7 +381,7 @@ export class FakeApi implements Api {
   async piece_duplicate(pieceId: string) {
     this.log("piece_duplicate", [pieceId]);
     const index = this.pieces.findIndex((p) => p.id === pieceId);
-    if (index < 0) return fail("That drawing isn't on the paper anymore.");
+    if (index < 0) return fail(GONE);
     const original = this.pieces[index];
     const copy: PieceInfo = {
       id: `piece-${this.nextPiece++}`,
@@ -364,6 +394,7 @@ export class FakeApi implements Api {
 
   async piece_delete(pieceId: string) {
     this.log("piece_delete", [pieceId]);
+    if (!this.pieces.some((p) => p.id === pieceId)) return fail(GONE);
     this.pieces = this.pieces.filter((p) => p.id !== pieceId);
     return ok({});
   }

@@ -4,7 +4,7 @@
  */
 import { BridgeError, type Client } from "../bridge/client";
 import type { MachineStatus, PlacementData, PlotStatus } from "../bridge/contract";
-import { pieceBox, resizeBox, rotateAboutCenter, type Point } from "../geometry/placement";
+import { MAX_SCALE, pieceBox, resizeBox, rotateAboutCenter, type Point } from "../geometry/placement";
 import type { Units } from "../geometry/units";
 import { disabledReason, type Control } from "../state/reasons";
 import { jobOf, pieceBoxOnPaper, plotRunning, selectedPieces, selectionBox } from "../state/selectors";
@@ -12,6 +12,7 @@ import { Store, type AppState, type Notice, type Tool, type ViewOptions } from "
 
 export const ONE_DRAWING = "Select one drawing to resize or turn it.";
 export const STRETCH_TURNED = "Use W% and H% to stretch a turned drawing.";
+export const TOO_BIG = "Drawings can be scaled up to 10000%.";
 const RUNNING = "A plot is running.";
 const NO_ROOM = "The margins leave no room on this paper.";
 const INFO_MS = 8000;
@@ -42,6 +43,11 @@ export class App {
   private scanTimer: ReturnType<typeof setInterval> | null = null;
   private colorsTimer: ReturnType<typeof setTimeout> | null = null;
   private noticeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Calls that change what's on the paper run one after another, in the order they were asked for. */
+  private edits: Promise<unknown> = Promise.resolve();
+  /** The newest placement still to be sent, per piece; only that one goes when the previous reply is in. */
+  private readonly wanted = new Map<string, PlacementData>();
+  private readonly sending = new Map<string, Promise<void>>();
 
   constructor(
     readonly store: Store<AppState>,
@@ -336,7 +342,7 @@ export class App {
 
   async rotatePaper(): Promise<void> {
     if (this.blocked("rotatePaper")) return;
-    const reply = await this.attempt(() => this.client.call("paper_rotate"));
+    const reply = await this.attempt(() => this.inOrder(() => this.client.call("paper_rotate")));
     if (!reply) return;
     this.store.update({ material: reply.material, paper: reply.paper, pieces: reply.pieces });
     this.refreshColors();
@@ -392,7 +398,7 @@ export class App {
 
   async placeJob(jobId: string, at: Point = this.marginCorner()): Promise<void> {
     if (plotRunning(this.state)) return this.explain(RUNNING);
-    const reply = await this.attempt(() => this.client.call("job_place", jobId, at[0], at[1]));
+    const reply = await this.attempt(() => this.inOrder(() => this.client.call("job_place", jobId, at[0], at[1])));
     if (!reply) return;
     this.store.update((s) => ({ pieces: [...s.pieces, reply.piece], selection: [reply.piece.id] }));
     this.refreshColors();
@@ -406,7 +412,7 @@ export class App {
     const copies = this.state.pieces.filter((p) => p.job_id === jobId).length;
     const remove = async () => {
       this.dismissNotice();
-      const reply = await this.attempt(() => this.client.call("job_remove", jobId));
+      const reply = await this.attempt(() => this.inOrder(() => this.client.call("job_remove", jobId)));
       if (!reply) return;
       const gone = new Set(reply.removed_pieces);
       this.store.update((s) => ({
@@ -462,14 +468,60 @@ export class App {
     this.store.update((s) => ({ pieces: s.pieces.map((p) => (p.id === id ? { ...p, placement } : p)) }));
   }
 
-  /** Send a piece's current placement to Python (the end of a drag, or a typed value). */
-  async commitPlacement(id: string): Promise<void> {
-    const piece = this.state.pieces.find((p) => p.id === id);
-    if (!piece) return;
-    const p = piece.placement;
-    const reply = await this.attempt(() => this.client.call("piece_place", id, p.x, p.y, p.scale, p.rotation, p.scale_y));
-    if (reply) this.previewPlacement(id, reply.placement);
+  private inOrder<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.edits.then(work);
+    this.edits = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Ask Python for the Jobs list and the placed drawings again, after it refused a change. */
+  async reload(): Promise<void> {
+    try {
+      const { jobs, pieces } = await this.client.call("job_list");
+      const ids = new Set(pieces.map((p) => p.id));
+      this.store.update((s) => ({ jobs, pieces, selection: s.selection.filter((id) => ids.has(id)) }));
+    } catch (error) {
+      this.fail(error);
+    }
     this.refreshColors();
+  }
+
+  /** Send a piece's current placement to Python (the end of a drag, or a typed value). */
+  commitPlacement(id: string): Promise<void> {
+    const piece = this.state.pieces.find((p) => p.id === id);
+    if (!piece) return Promise.resolve();
+    const p = piece.placement;
+    if (p.scale > MAX_SCALE || p.scale_y > MAX_SCALE) {
+      this.explain(TOO_BIG);
+      return this.inOrder(() => this.reload());
+    }
+    this.wanted.set(id, p);
+    const busy = this.sending.get(id);
+    if (busy) return busy;
+    const sending = this.inOrder(() => this.sendPlacements(id));
+    this.sending.set(id, sending);
+    return sending;
+  }
+
+  private async sendPlacements(id: string): Promise<void> {
+    try {
+      for (let p = this.wanted.get(id); p; p = this.wanted.get(id)) {
+        this.wanted.delete(id);
+        try {
+          const reply = await this.client.call("piece_place", id, p.x, p.y, p.scale, p.rotation, p.scale_y);
+          // A newer placement is waiting: its own reply will be applied, not this older one.
+          if (!this.wanted.has(id)) this.previewPlacement(id, reply.placement);
+        } catch (error) {
+          this.wanted.delete(id);
+          this.fail(error);
+          await this.reload();
+          return;
+        }
+      }
+      this.refreshColors();
+    } finally {
+      this.sending.delete(id);
+    }
   }
 
   async setPlacement(id: string, placement: PlacementData): Promise<void> {
@@ -565,7 +617,7 @@ export class App {
     if (this.blocked("arrange")) return;
     const copies: string[] = [];
     for (const piece of selectedPieces(this.state)) {
-      const reply = await this.attempt(() => this.client.call("piece_duplicate", piece.id));
+      const reply = await this.attempt(() => this.inOrder(() => this.client.call("piece_duplicate", piece.id)));
       if (!reply) continue;
       copies.push(reply.piece.id);
       this.store.update((s) => {
@@ -581,7 +633,7 @@ export class App {
   async deleteSelection(): Promise<void> {
     if (this.blocked("arrange")) return;
     for (const id of [...this.state.selection]) {
-      const reply = await this.attempt(() => this.client.call("piece_delete", id));
+      const reply = await this.attempt(() => this.inOrder(() => this.client.call("piece_delete", id)));
       if (!reply) continue;
       this.store.update((s) => ({ pieces: s.pieces.filter((p) => p.id !== id), selection: s.selection.filter((x) => x !== id) }));
     }

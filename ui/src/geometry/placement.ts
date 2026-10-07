@@ -26,6 +26,9 @@ export type Handle = "nw" | "ne" | "se" | "sw";
 
 export const MIN_SIZE_MM = 0.5;
 
+/** The largest scale Python accepts (session.MAX_SCALE): 100×, shown as 10000%. */
+export const MAX_SCALE = 100;
+
 const QUARTER: Record<number, Point> = { 0: [1, 0], 90: [0, 1], 180: [-1, 0], 270: [0, -1] };
 
 export function isQuarterTurn(rotation: number): boolean {

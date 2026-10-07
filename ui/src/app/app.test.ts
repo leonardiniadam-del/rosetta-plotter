@@ -122,6 +122,42 @@ describe("App", () => {
     expect(p.scale_y).toBeCloseTo(p.scale);
   });
 
+  it("quick nudges all land, in order, and a late reply never undoes a newer one", async () => {
+    const { app, fake } = await withOneJob();
+    const release = fake.hold("piece_place");
+    void app.moveSelectionBy(1, 0);
+    void app.moveSelectionBy(1, 0);
+    void app.moveSelectionBy(1, 0);
+    await settle();
+    expect(app.state.pieces[0].placement.x).toBeCloseTo(9.35);
+    release();
+    await settle();
+    const sent = fake.called("piece_place").map((args) => args[1] as number);
+    expect(sent.at(-1)).toBeCloseTo(9.35);
+    expect(sent.length).toBeLessThan(3); // nudges made while one is on its way are sent as one
+    expect(app.state.pieces[0].placement.x).toBeCloseTo(9.35);
+    const { pieces } = await fake.job_list();
+    expect(pieces[0].placement.x).toBeCloseTo(9.35);
+  });
+
+  it("puts a drawing back when Python refuses the change", async () => {
+    const { app, fake } = await withOneJob();
+    fake.failNext("piece_place", "Nope.");
+    await app.setPlacement("piece-1", { ...app.state.pieces[0].placement, x: 50 });
+    await settle();
+    expect(app.state.pieces[0].placement.x).toBeCloseTo(6.35);
+    expect(app.state.notice?.message).toBe("Nope.");
+  });
+
+  it("refuses to scale past 10000% without asking Python", async () => {
+    const { app, fake } = await withOneJob();
+    await app.setScale(150, 150);
+    await settle();
+    expect(fake.called("piece_place")).toEqual([]);
+    expect(app.state.pieces[0].placement.scale).toBe(1);
+    expect(app.state.notice?.message).toBe("Drawings can be scaled up to 10000%.");
+  });
+
   it("turns the paper with everything on it", async () => {
     const { app } = await withOneJob();
     await app.rotatePaper();
