@@ -6,3 +6,5 @@ __pycache__/
 /dist/
 /out/
 rosetta-plot.log
+/ui/node_modules/
+/ui/dist/

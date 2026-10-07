@@ -1,0 +1,46 @@
+/* The dark theme (manager UI spec §3). Components read these through var(...); shadow roots inherit them. */
+:root {
+  color-scheme: dark;
+  --app-bg: #1e1e1e;
+  --panel: #2b2b2b;
+  --panel-raised: #353535;
+  --canvas: #262626;
+  --grid-minor: #303030;
+  --grid-major: #3a3a3a;
+  --line: #444444;
+  --text: #e6e6e6;
+  --text-dim: #a8a8a8;
+  --text-faint: #707070;
+  --paper: #f4f3ef;
+  --accent: #3b8eea;
+  --axis-x: #e2504c;
+  --axis-y: #5fa83a;
+  --pen-cross: #e0245e;
+  --danger: #e5534b;
+  --warning: #d9a03b;
+  --success: #4caf68;
+  --ink-black: #1b1b1b;
+  --font: "Segoe UI", system-ui, sans-serif;
+  --font-size: 12px;
+  --font-size-small: 11px;
+  --control-height: 22px;
+  --tool-size: 28px;
+  --radius: 3px;
+  --menu-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--app-bg);
+  color: var(--text);
+  font: var(--font-size) / 1.4 var(--font);
+  user-select: none;
+}
+
+rp-app {
+  display: block;
+  height: 100%;
+}
