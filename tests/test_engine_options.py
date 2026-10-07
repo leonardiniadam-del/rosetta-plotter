@@ -5,7 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from rosetta.engine import options as engine_options
-from rosetta.engine.options import PlotSettings, apply_settings, make_axidraw
+from rosetta.engine.options import (
+    MIN_PEN_TRAVEL, Advanced, PlotSettings, advanced_from_dict, apply_settings, make_axidraw,
+)
 
 
 def test_pen_up_follows_pen_down():
@@ -93,9 +95,6 @@ def test_make_axidraw_sends_ems_messages_to_the_log(caplog):
     assert "Plot paused by keyboard interrupt." in caplog.text
 
 
-from types import SimpleNamespace
-
-from rosetta.engine.options import Advanced, MIN_PEN_TRAVEL, advanced_from_dict
 
 
 def _options_after(settings):
