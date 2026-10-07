@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from rosetta.colors import color_name, is_white
 from rosetta.geometry import (
-    Point, Rect, bbox, clip_polyline, contains, intersect, place_point, rotated_size,
+    Point, Rect, bbox, clip_polyline, contains, intersect, place_point,
 )
 from rosetta.models import MachineModel
 
@@ -38,15 +38,18 @@ class Material:
 
 @dataclass(frozen=True)
 class Placement:
-    """Where a piece sits on the paper: its rotated, scaled box's top-left at (x, y).
+    """Where a piece sits on the paper: the top-left of its turned, scaled artwork's upright box at (x, y).
 
-    Frozen so duplicated pieces can't share a placement by accident; use dataclasses.replace.
+    scale stretches the artwork along its own width and scale_y along its own height (None: the same as
+    scale); rotation turns it clockwise, in degrees. Frozen so duplicated pieces can't share a placement
+    by accident; use dataclasses.replace.
     """
 
     x: float = 0.0
     y: float = 0.0
     scale: float = 1.0
-    rotation: int = 0  # clockwise degrees, multiple of 90
+    rotation: float = 0  # clockwise degrees, any finite angle
+    scale_y: float | None = None  # None: the same as scale
 
 
 @dataclass
@@ -77,10 +80,12 @@ def compose_job(
     material: Material,
     pieces: list[PlacedPiece],
     skip_white: bool = True,
+    skip_colors: frozenset[str] = frozenset(),
 ) -> Job:
     """Place every piece on the paper, clip to paper ∩ machine reach, and group lines by pen
     color in order of first appearance (pieces in list order; a color whose first shapes are
-    clipped away entirely moves later)."""
+    clipped away entirely moves later). Colors in skip_colors (lowercase '#rrggbb') are left
+    out, like hidden pens."""
     _check_material(material)
     travel_x, travel_y = model.travel_mm
     reach = (0.0, 0.0, travel_x - REACH_EDGE_INSET_MM, travel_y - REACH_EDGE_INSET_MM)
@@ -96,11 +101,14 @@ def compose_job(
         for shape in art.shapes:
             if skip_white and is_white(shape.color):
                 continue
+            if shape.color in skip_colors:
+                continue
             for polyline in shape.polylines:
                 placed = [
                     place_point(
                         point, art.width_mm, art.height_mm, placement.x, placement.y,
                         placement.scale, placement.rotation, (material.x, material.y),
+                        placement.scale_y,
                     )
                     for point in polyline
                 ]
@@ -133,14 +141,15 @@ def _check_placement(placement: Placement) -> None:
     """Placements come from the UI; refuse values that would put NaN or mirrored art in the plot."""
     if not (math.isfinite(placement.x) and math.isfinite(placement.y)):
         raise ValueError(f"Placement position must be finite: {placement}")
-    if not (math.isfinite(placement.scale) and placement.scale > 0):
-        raise ValueError(f"Placement scale must be a positive number: {placement}")
-    try:
-        rotated_size(1.0, 1.0, placement.rotation)
-    except TypeError as error:
-        raise ValueError(
-            f"Placement rotation must be a multiple of 90 degrees: {placement}"
-        ) from error
+    for name in ("scale", "scale_y"):
+        value = getattr(placement, name)
+        if name == "scale_y" and value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not (math.isfinite(value) and value > 0):
+            raise ValueError(f"Placement {name} must be a positive number: {placement}")
+    rotation = placement.rotation
+    if isinstance(rotation, bool) or not isinstance(rotation, (int, float)) or not math.isfinite(rotation):
+        raise ValueError(f"Placement rotation must be a finite number of degrees: {placement}")
 
 
 def initial_placement(

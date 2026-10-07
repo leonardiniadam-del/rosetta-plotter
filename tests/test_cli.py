@@ -110,7 +110,7 @@ _PAPER = {"width": 100, "height": 100}
     ({"model": 1, "material": _PAPER, "pieces": "art.svg"}, ['"pieces"', "list"]),
     ({"model": 1, "material": _PAPER, "pieces": [{"page": 0}]}, ['"path"', "missing"]),
     ({"model": 1, "material": _PAPER, "pieces": [{"path": "a.svg", "scale": "huge"}]}, ['"scale"', "number"]),
-    ({"model": 1, "material": _PAPER, "pieces": [{"path": "a.svg", "rotation": 45.5}]}, ['"rotation"']),
+    ({"model": 1, "material": _PAPER, "pieces": [{"path": "a.svg", "rotation": "ninety"}]}, ['"rotation"', "number"]),
     ([1, 2], ["JSON object"]),
     ("{not json", ["isn't valid JSON"]),
 ])
@@ -122,6 +122,13 @@ def test_prepare_names_the_file_and_the_problem_in_a_bad_job(tmp_path, capsys, j
     for word in words:
         assert word in text
     assert "Traceback" not in text
+
+
+def test_prepare_accepts_free_angles_and_stretching(tmp_path, capsys):
+    job = json.loads(_job(tmp_path).read_text(encoding="utf-8"))
+    job["pieces"] = [{"path": "art.svg", "x": 20, "y": 20, "scale": 1.5, "scale_y": 0.75, "rotation": 33.5}]
+    path = _write_job(tmp_path, job)
+    assert main(["prepare", str(path), "-o", str(tmp_path / "plot")]) == 0
 
 
 def test_prepare_with_a_missing_job_file_says_so(tmp_path, capsys):

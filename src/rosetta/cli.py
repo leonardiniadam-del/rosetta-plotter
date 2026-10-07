@@ -165,8 +165,8 @@ def cmd_prepare(args) -> int:
             raise JobProblem(f'{piece_where}: should be an object like {{"path": "art.svg"}}')
         path = _get(spec, "path", piece_where, "text")
         page = _get(spec, "page", piece_where, "whole", 0)
-        placed = {key: _get(spec, key, piece_where, "number", None) for key in ("x", "y", "scale")}
-        rotation = _get(spec, "rotation", piece_where, "whole", None)
+        placed = {key: _get(spec, key, piece_where, "number", None) for key in ("x", "y", "scale", "scale_y")}
+        rotation = _get(spec, "rotation", piece_where, "number", None)
         artwork = load_artwork((args.job.parent / path).resolve(), page)
         for issue in artwork.issues:
             print(f"  [{artwork.name}] {issue.message}")
@@ -174,6 +174,7 @@ def cmd_prepare(args) -> int:
             placement = Placement(
                 placed["x"] or 0.0, placed["y"] or 0.0,
                 1.0 if placed["scale"] is None else placed["scale"], rotation or 0,
+                placed["scale_y"],
             )
         else:
             placement = initial_placement(artwork, material)

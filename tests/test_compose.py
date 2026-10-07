@@ -5,6 +5,7 @@ from rosetta.compose import (
     compose_job, initial_placement,
 )
 from rosetta.flatten import Shape
+from rosetta.geometry import place_point
 from rosetta.loader import Artwork
 from rosetta.models import get_model
 
@@ -148,10 +149,31 @@ def test_portrait_art_respects_the_vertical_margin():
     assert placement.y == pytest.approx(DEFAULT_MARGIN_MM)
 
 
-@pytest.mark.parametrize("rotation", [45, "90"])
+@pytest.mark.parametrize("rotation", [float("nan"), "90"])
 def test_bad_rotations_are_rejected_even_for_empty_pieces(rotation):
     with pytest.raises(ValueError):
         compose_job(A4_MACHINE, Material(0, 0, 50, 50), [PlacedPiece(_art(10, 10, []), Placement(rotation=rotation))])
+
+
+def test_a_turned_stretched_piece_lands_where_place_point_says():
+    art = _art(40, 20, [_line("#000000", (0, 0), (40, 0), (40, 20))])
+    placement = Placement(x=30, y=40, scale=2.0, rotation=33.5, scale_y=0.5)
+    job = compose_job(A4_MACHINE, Material(0, 0, 200, 150), [PlacedPiece(art, placement)])
+    expected = [place_point(p, 40, 20, 30, 40, 2.0, 33.5, (0, 0), 0.5) for p in [(0, 0), (40, 0), (40, 20)]]
+    assert job.groups[0].polylines[0] == pytest.approx(expected)
+
+
+def test_skipped_colors_are_left_out():
+    art = _art(100, 100, [_line("#ff0000", (0, 0), (10, 0)), _line("#000000", (0, 5), (10, 5))])
+    job = compose_job(A4_MACHINE, Material(0, 0, 200, 200), [PlacedPiece(art, Placement())],
+                      skip_colors=frozenset({"#ff0000"}))
+    assert [group.color for group in job.groups] == ["#000000"]
+
+
+@pytest.mark.parametrize("scale_y", [0, -1, float("nan"), "half"])
+def test_bad_stretches_are_rejected(scale_y):
+    with pytest.raises(ValueError):
+        compose_job(A4_MACHINE, Material(0, 0, 50, 50), [PlacedPiece(_art(10, 10, []), Placement(scale_y=scale_y))])
 
 
 @pytest.mark.parametrize(
