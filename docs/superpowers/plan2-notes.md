@@ -36,6 +36,7 @@ Left as they are on purpose. The page-facing rules are in docs/bridge.md.
 - **A Pause at the instant Return Home starts can be lost.** It's harmless: the pen just reaches Home.
 
 ## Visual direction (from Adam, 2026-10-07): Rhino 8 as the inspiration
+> **Updated later on 2026-10-07:** the layout is now Rayjet Manager arranged like Illustrator, with a dark theme and Rhino's canvas kept for the plate. See `specs/2026-10-07-rosetta-manager-ui-design.md`. The step bar and guided flow below no longer apply.
 Adam shared a Rhino 8 screenshot as the look for the app. Architecture students already know Rhino, so a familiar look lowers the learning curve. What to borrow:
 - **Canvas.** A single Top-style view: a gray canvas with a fine grid and the world axes drawn from Home (red = X along the rail, green = Y toward the student). It shows the plotter's reach, the paper and the artwork. There's one view, not four viewports.
 - **Instruction line.** Rhino's command prompt area at the top becomes the plain-language instruction line for the current step ("Slide the pen to the corner next to the HOME label…").

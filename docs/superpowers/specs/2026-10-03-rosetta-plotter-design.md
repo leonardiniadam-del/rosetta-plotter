@@ -102,6 +102,8 @@ Students currently plot through Inkscape's AxiDraw extension. Its interface is h
 
 ## 5. The student's flow
 
+> **Superseded 2026-10-07:** the guided flow below, and the UI parts of §6.5 (step bar, Fluent UI), are replaced by the manager UI in `2026-10-07-rosetta-manager-ui-design.md`. What the steps do (connect, identify, Home, paper, import, pen, plot) is still how the app works underneath.
+
 A step bar across the top reads **1 Plotter → 2 Material → 3 Artwork → 4 Pen → 5 Plot**. The first time through, the steps unlock in order. After that the student can move between them freely. Each screen has one primary action, a single instruction sentence, and an illustration. "Advanced" links lead to the engine options (speeds, acceleration, pen timing, optimization, resolution).
 
 ### Step 1 — Plotter
