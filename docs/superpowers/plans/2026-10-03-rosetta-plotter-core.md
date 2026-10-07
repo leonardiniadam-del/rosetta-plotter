@@ -3825,23 +3825,12 @@ Expected: the firmware version, `Power adapter: OK`, and `Model: unknown` (or a 
 
 - [ ] **Step 2: Prepare a measurable test job**
 
-Save `out\square.svg`, a 100 mm red square at (20 mm, 20 mm) on a Letter page:
-```xml
-<svg xmlns="http://www.w3.org/2000/svg" width="215.9mm" height="279.4mm" viewBox="0 0 215.9 279.4">
-  <rect x="20" y="20" width="100" height="100" fill="none" stroke="#ff0000"/>
-  <line x1="20" y1="140" x2="120" y2="140" stroke="#000000"/>
-</svg>
-```
-Save `out\job.json`, replacing `N` with the model number:
-```json
-{"model": N, "material": {"x": 0, "y": 0, "width": 215.9, "height": 279.4}, "pieces": [{"path": "square.svg", "x": 0, "y": 0}]}
-```
-Run:
+The test files are already in the repo: `examples\hardware-test\square.svg` is a Letter page with a 100 mm red square at (20, 20) mm and a black line from (20, 140) to (120, 140). Run, replacing `N` with the model number from Step 1:
 ```powershell
-.venv\Scripts\rosetta-plot prepare out\job.json -o out\plot
+.venv\Scripts\rosetta-plot prepare examples\hardware-test\job.json --model N -o out\plot
 .venv\Scripts\rosetta-plot estimate out\plot.svg
 ```
-Expected: `2 pen colors` (red, then black), plus a time per layer.
+Expected: `2 pen colors` (red, then black), plus a time per layer. A `rosetta-plot.log` file is written next to the files each command uses; if anything odd happens, keep that log for troubleshooting.
 
 - [ ] **Step 3: Set the pen height**
 
@@ -3857,13 +3846,14 @@ Expected: `2 pen colors` (red, then black), plus a time per layer.
 1. Run `.venv\Scripts\rosetta-plot trace out\plot.svg --pen-down P`. Check that the pen outlines the region from (20, 20) to (120, 140) mm, then returns Home.
    - Run it once more and press **Ctrl+C** partway around. Confirm it stops with the pen up, says the motors are off, and asks you to slide the pen Home.
 2. Run `.venv\Scripts\rosetta-plot plot out\plot.svg --pen-down P` and follow the prompts.
+   - The tool asks for the first (red) pen **before** asking you to slide the pen Home. That way, pushing the pen into its holder can't move the carriage after you've homed it.
    - **Ctrl+C:** keep a hand near the plotter's physical pause button for this first test. During the red layer, press **Ctrl+C** once. At the menu type `r` and confirm it resumes cleanly.
    - **Physical pause button:** press it once and confirm the same menu appears. This time type `h`, check the pen goes Home, then press Enter to resume.
    - **Stopping and finishing later:** on a second sheet, pause during the red layer and type `q`. The tool turns the motors off and saves `out\plot.resume.svg`.
      - Slide the pen Home.
      - Run `.venv\Scripts\rosetta-plot plot out\plot.svg --pen-down P --resume` and confirm it finishes the red layer and then the black layer.
      - Don't re-run `prepare` between stopping and resuming. If you do, `--resume` refuses, because the saved `plot.resume.json` records which version of `plot.svg` it belongs to.
-     - If you stop between colors (at a "Load the … pen" prompt), there's nothing to resume. The tool says so. To finish, prepare a job with only the remaining colors.
+     - If you stop between colors (at a "Load the … pen" prompt), there's nothing to resume. The tool prints the exact `--start-layer` command that plots the remaining colors.
 
 - [ ] **Step 5: Measure, then test unplugging**
 
