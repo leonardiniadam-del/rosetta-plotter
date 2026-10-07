@@ -35,7 +35,9 @@ Adam's direction:
 | Plate | **Rhino's Top view:** grid, red X and green Y axes from Home, the dashed reach, and the paper. |
 | Theme | **Dark**, like Illustrator's default. |
 | Toolkit | **Custom compact:** TypeScript + Lit + our own styling. Fluent UI is dropped because its controls are sized for touch and the look here is a dense desktop tool. |
-| Placement | Drawings are placed at **100%, never auto-shrunk.** Architecture drawings are to scale. Off-paper parts show red and aren't drawn. Fit to paper is a menu command. |
+| Placement | Drawings are placed at **100%, never auto-shrunk.** Architecture drawings are to scale. Off-paper parts show red and aren't drawn. Fit to paper is a menu command. A drawing's **origin is always its top-left corner** (the corner nearest Home), and X/Y always refer to it. |
+| Rotation | **Free rotation:** the Rotate tool turns a drawing to any angle, Shift snaps to 15°, and the angle can be typed. **Rotate paper** turns the paper and everything on it 90°. |
+| Units | **Decimal inches, millimetres, centimetres.** No measurements are drawn on the work area; dimensions appear in the control bar for whatever is selected. |
 | Pens | A Pens panel lists the colors in plot order. An **eye toggle skips a color** in the plot. |
 
 ## 2. The window
@@ -67,21 +69,17 @@ Adam's direction:
 |---|---|
 | File | Import… (Ctrl+I) · Settings… (Ctrl+,) · Copy diagnostics · Exit |
 | Edit | Undo (Ctrl+Z) · Redo (Ctrl+Shift+Z) · Delete (Del) · Select all (Ctrl+A) · Deselect (Ctrl+Shift+A) |
-| Object | Duplicate (Ctrl+D) · Rotate 90° clockwise (R) · Center on paper (Ctrl+Shift+C) · Fit to paper · Remove job from list |
-| View | Fit paper in window (Ctrl+0) · Fit reach in window (Ctrl+Alt+0) · Zoom in (Ctrl+=) · Zoom out (Ctrl+-) · Show grid · Show margins · Show original artwork · Snap (on by default) |
+| Object | Duplicate (Ctrl+D) · Rotate 90° clockwise (Ctrl+R) · Rotate paper 90° (Ctrl+Shift+R) · Center on paper (Ctrl+Shift+C) · Fit to paper · Remove job from list |
+| View | Fit paper in window (Ctrl+0) · Fit reach in window (Ctrl+Alt+0) · Zoom in (Ctrl+=) · Zoom out (Ctrl+-) · Units › Inches / Millimeters / Centimeters · Show grid · Show margins · Show rulers (off by default) · Show original artwork · Snap (on by default) |
 | Plotter | Set Home · Plotter model… · Move pen Home · Trace outline · Preview path · Start (Ctrl+Enter) · Pause (Ctrl+Shift+P) · Stop |
 | Help | Quick Start · Keyboard shortcuts · About Rosetta Plotter |
 
-**Undo** covers placement edits only: move, scale, rotate, duplicate, delete and place. It never covers plotter actions.
+**Undo** covers placement edits only: move, scale, rotate, rotate paper, duplicate, delete and place. It never covers plotter actions.
 
 ### 2.2 Control bar (context)
-- **A placed drawing is selected:**
-  - the 9-point **reference locator**, which sets the point X/Y refers to and the point double-click placement uses;
-  - **X, Y, W, H**, with a proportion lock that is always on (W and H change together);
-  - **rotation** (0/90/180/270);
-  - the drawing's name.
+- **A placed drawing is selected:** the drawing's name, then its **X, Y** (its top-left corner), **W, H** (proportions always locked, so W and H change together) and **angle** (any value; typed or set with the Rotate tool). With several selected, the values describe the box around them all.
 - **Nothing selected:**
-  - **Paper** size (the presets from spec §5.2 plus Custom), **orientation**, and the paper's **X/Y** (its corner nearest Home; 0, 0 = lined up with Home);
+  - **Paper** size (the presets from spec §5.2 plus Custom) with its **W, H** readout, **orientation**, and the paper's **X/Y** (its corner nearest Home; 0, 0 = lined up with Home);
   - **Mark corner at pen**, which sets X/Y to the pen's position;
   - **margin**.
 - **Right end, always shown:**
@@ -95,12 +93,13 @@ Adam's direction:
 |---|---|
 | Navigate | Select (V) · Hand (H, or hold Space) · Zoom (Z; Alt-click zooms out) |
 | Plotter | Move pen to point (P, a click on the plate moves the pen there, pen up) · Set Home · Trace outline · Preview path |
-| Arrange | Rotate 90° · Center on paper · Duplicate · Delete |
+| Arrange | Rotate (R; drag around the selection to turn it about its center, Shift snaps to 15°; double-click the tool to type an angle) · Rotate paper 90° · Center on paper · Duplicate · Delete |
 
 Every tool has a tooltip with its name and shortcut. The active tool is highlighted.
 
 ### 2.4 Plate (canvas)
-- **Frame:** the machine frame (spec §4). Home is the top-left corner. Red X runs along the rail, green Y toward the student. Rulers on the top and left edges are in the current units.
+- **Frame:** the machine frame (spec §4). Home is the top-left corner. Red X runs along the rail, green Y toward the student.
+- **No numbers or labels on the work area.** Dimensions live in the control bar and the status bar. Rulers (in the current units) appear only if View › Show rulers is on.
 - **What's drawn:**
   - the dark grid, at a 10 mm minor step (0.25 in in inches), with every 5th line stronger;
   - the dashed **reach** of the connected model;
@@ -114,6 +113,7 @@ Every tool has a tooltip with its name and shortcut. The active tool is highligh
   - Wheel zooms around the cursor. Hand or Space-drag pans. Fit paper and fit reach are commands.
   - **Select:** click a drawing to select it, Shift-click to add, drag on empty space to marquee.
   - **Move:** drag the selection. Drag a corner handle to scale proportionally around the opposite corner.
+  - **Rotate:** with the Rotate tool, drag around the selection to turn it about its center (Shift snaps to 15°). A rotated drawing's X/Y/W/H describe its upright bounding box.
   - **Nudge:** arrow keys move the selection 1 mm, Shift+arrow 10 mm.
   - **Snap:** while dragging, the selection's box snaps to the paper's corners, edges, center and margin lines, and to other drawings' box edges, within 6 screen px. A thin guide shows the snap line. Hold Alt to turn snapping off.
 - **Notification strip:** a slim bar across the top of the plate for problems and plot recovery (§4.6). It's never a popup.
@@ -141,7 +141,7 @@ From left to right:
 - power ("Power OK" / "Power adapter unplugged");
 - Home ("Home set" / "Home not set");
 - the pen X, Y and the cursor X, Y, in the current units;
-- on the right, the **in | mm** toggle (remembered in settings).
+- on the right, a **units** dropdown, in | mm | cm (remembered in settings).
 
 ## 3. Visual design (dark)
 
@@ -182,7 +182,9 @@ From left to right:
 - **Importing:** Import (dialog), or drop files on the window, calls `artwork_pages`. For more than one page, a small dialog asks which page. Then `job_import(path, page)` adds a row to Jobs.
   - Dropping onto the plate also places the job at the drop point.
   - Unsupported files (`.afdesign` and others) show their message in the strip.
-- **Placing:** double-click places at the paper's reference point, and dragging places at the drop point. Both call `job_place(job_id, x, y)` at **scale 1, rotation 0**.
+- **Placing:** double-click puts the drawing's top-left corner at the paper's margin corner (the corner nearest Home, inset by the margin). Dragging places its top-left corner at the drop point. Both call `job_place(job_id, x, y)` at **scale 1, angle 0**.
+- **Rotating:** the Rotate tool and the angle field turn a drawing about its center; the page computes the new top-left so the center stays put, then calls `piece_place`. Rotate 90° does the same in a quarter turn.
+- **Rotate paper 90°** calls `paper_rotate()`. It swaps the paper's width and height and turns every placed drawing with it, so the layout keeps its place on the sheet.
 - **Editing:** move, scale, rotate, nudge and typed values call `piece_place`. A drag sends one call when it ends, not on every frame. Duplicate calls `piece_duplicate`, and Delete calls `piece_delete`.
 - **Fit to paper:** scales the selection down (never up) to fit inside the margins, centered.
 - **Removing a job:** Remove from list removes the job **and its placed copies**, after a one-line confirmation in the strip ("Remove logo.ai and its 2 copies? Remove · Keep").
@@ -248,7 +250,8 @@ From left to right:
 
 ## 5. Units
 - **Inside the app** everything is mm. The page converts to the display units for fields, rulers, the status bar and the times panel.
-- **Typed values:** fields accept a unit suffix ("2 in", "50 mm", "50mm"). A bare number is read in the display units.
+- **Choices:** decimal inches (2 decimals, "3.25 in"), millimetres (1 decimal, "82.6 mm") and centimetres (2 decimals, "8.26 cm"), from View › Units or the status bar.
+- **Typed values:** fields accept a unit suffix ("2 in", "2\"", "50 mm", "5 cm"). A bare number is read in the display units.
 - **Checking:** the page checks ranges in the student's units before calling the bridge. A paper up to 2000 mm, a margin of 0–50 mm and so on are shown converted, so millimetre-only messages from Python stay a fallback.
 
 ## 6. Disabled controls and their tooltips
@@ -262,7 +265,8 @@ From left to right:
 | Move pen to point, jog pad, Move pen Home, Raise or Lower pen, Test mark | No plotter connected · Model unknown · Home not set · A plot is running |
 | Trace outline | No plotter · Home not set · Nothing placed · A plot is running |
 | Preview path | Nothing placed · Times not ready yet |
-| Arrange tools, control bar X/Y/W/H | Nothing selected · A plot is running |
+| Arrange tools, control bar X/Y/W/H/angle | Nothing selected · A plot is running |
+| Rotate paper 90° | A plot is running |
 | Mark corner at pen | Home not set · A plot is running |
 
 ## 7. Changes to the Python layer (Plan 2a)
@@ -275,6 +279,8 @@ These come first in Plan 2b, each test-first.
   - `place_job(job_id, x, y) -> Piece` (scale 1, rotation 0); pieces carry `job_id`.
   - `remove_job(job_id)`: removes its pieces too.
   - `Session.add` and its use of `initial_placement` go away. (`compose.initial_placement` stays, for the CLI.)
+- **Free rotation:** `Placement.rotation` becomes any angle in degrees (clockwise on screen). `geometry.place_point` and `rotated_size` handle any angle: the placement's (x, y) is the top-left of the rotated, scaled artwork frame's upright bounding box. The multiple-of-90 checks in `compose` and `session` go; finite angles are normalized to [0, 360). The CLI's job file accepts any angle.
+- **Rotate paper:** `Session.rotate_paper()` swaps the paper's width and height and turns every piece 90° clockwise about the paper, mapping each piece's box (x, y, w, h) to (H − y − h, x, h, w), where H is the paper's height before the turn, and adding 90° to its angle. The bridge gets `paper_rotate()`, returning `material` and every piece's placement.
 - **Hidden pens:** `Session.hidden_colors` is left out by `compose`; `compose_job` gets a `skip_colors` argument, alongside `skip_white`. The plot, times and trace all follow it.
 - **Bridge (`api.py`, `payloads.py`, `docs/bridge.md`):**
   - **Added:**
@@ -282,10 +288,12 @@ These come first in Plan 2b, each test-first.
     - `job_place(job_id, x, y)` returns `piece` {id, job_id, placement};
     - `job_remove(job_id)` returns `removed_pieces`;
     - `set_pen_visible(color, visible)`;
-    - `job_list()`, for a page reload.
+    - `job_list()`, for a page reload;
+    - `paper_rotate()`.
   - **Changed:**
     - `piece_duplicate` returns the slim piece shape;
-    - `job_colors` lists all colors with a `visible` flag.
+    - `job_colors` lists all colors with a `visible` flag;
+    - `piece_place` accepts any angle.
   - **Removed:** `artwork_import`, replaced by `job_import`.
 - **Tests:** the existing session, payload and api tests are updated to match, the full suite stays green, and the smoke window still passes.
 
@@ -308,7 +316,7 @@ These come first in Plan 2b, each test-first.
 ## 9. Testing
 - **Vitest, no browser:**
   - **Units** and parsing.
-  - **Placement math**, checked against fixtures generated from `rosetta.geometry.place_point`, for all four rotations and several scales.
+  - **Placement math**, checked against fixtures generated from `rosetta.geometry.place_point`, for 0°, 90°, 180°, 270° and several free angles (15°, 33.5°, 300°), at several scales; rotate-about-center and rotate-paper round trips.
   - **Snapping**, the reference point, bounding boxes, and the camera transforms.
   - **The store,** including undo.
   - **The serialization queue** in the bridge client.
