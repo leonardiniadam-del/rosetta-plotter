@@ -51,6 +51,15 @@ export class RpStrip extends AppElement {
     this.open = false;
   }
 
+  private shown: unknown = null;
+
+  protected willUpdate(): void {
+    if (this.s.notice !== this.shown) {
+      this.shown = this.s.notice;
+      this.open = false;
+    }
+  }
+
   render() {
     const notice = this.s.notice;
     if (!notice) return nothing;

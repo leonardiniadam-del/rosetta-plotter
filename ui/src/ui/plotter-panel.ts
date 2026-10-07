@@ -1,5 +1,6 @@
 /** The Plotter panel (spec §2.5): the model, the pen, its live height, a test mark, and the jog pad. */
 import { css, html } from "lit";
+import { live } from "lit/directives/live.js";
 import { disabledReason } from "../state/reasons";
 import { AppElement } from "./base";
 import { icon, type IconName } from "./icons";
@@ -80,7 +81,7 @@ export class RpPlotterPanel extends AppElement {
       </div>
       <label class="line"
         >Pen
-        <select aria-label="Pen type" @change=${(e: Event) => this.app.setPen(m.pen_down, (e.target as HTMLSelectElement).value)}>
+        <select aria-label="Pen type" .value=${live(m.pen_type)} @change=${(e: Event) => this.app.setPen(m.pen_down, (e.target as HTMLSelectElement).value)}>
           ${(s.start?.pen_types ?? []).map((t) => html`<option value=${t.key} ?selected=${t.key === m.pen_type}>${t.label}</option>`)}
         </select></label
       >

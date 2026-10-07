@@ -3,6 +3,8 @@ import "./controlbar";
 import { mount, settle, shadow, startApp } from "../test/setup";
 import type { RpField } from "./field";
 
+type RpControlbarLike = HTMLElement & { updateComplete: Promise<unknown> };
+
 function field(root: ShadowRoot, label: string): RpField {
   const found = Array.from(root.querySelectorAll("rp-field")).find((f) => (f as RpField).label === label);
   if (!found) throw new Error(`no field ${label}`);
@@ -30,6 +32,16 @@ describe("control bar, nothing selected", () => {
     commit(field(root, "Margin"), 12.7);
     await settle();
     expect(app.state.margin).toBe(12.7);
+  });
+
+  it("the paper list shows the paper actually in use", async () => {
+    const { app } = await startApp();
+    const root = shadow(await mount("rp-controlbar"));
+    const size = root.querySelector('select[aria-label="Paper size"]') as HTMLSelectElement;
+    size.value = "a4"; // picked, but the change never reached Python
+    app.store.update((s) => ({ paper: { ...s.paper } }));
+    await (root.host as RpControlbarLike).updateComplete;
+    expect(size.value).toBe("letter");
   });
 
   it("types a custom size only for Custom paper", async () => {

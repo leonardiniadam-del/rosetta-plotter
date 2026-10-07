@@ -1,5 +1,6 @@
 /** The control bar (spec §2.2): the selected drawing's numbers, or the paper's settings. */
 import { css, html, nothing } from "lit";
+import { live } from "lit/directives/live.js";
 import { ONE_DRAWING, STRETCH_TURNED } from "../app/app";
 import { isQuarterTurn } from "../geometry/placement";
 import { disabledReason } from "../state/reasons";
@@ -106,7 +107,7 @@ export class RpControlbar extends AppElement {
     const mark = disabledReason("markCorner", s);
     return html`<label
         >Paper
-        <select aria-label="Paper size" @change=${(e: Event) => this.choosePaper((e.target as HTMLSelectElement).value)}>
+        <select aria-label="Paper size" .value=${live(s.paper.size)} @change=${(e: Event) => this.choosePaper((e.target as HTMLSelectElement).value)}>
           ${(s.start?.papers ?? []).map((p) => html`<option value=${p.key} ?selected=${p.key === s.paper.size}>${p.label}</option>`)}
           <option value="custom" ?selected=${custom}>Custom</option>
         </select></label

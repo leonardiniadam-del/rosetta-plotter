@@ -1,5 +1,6 @@
 /** The status bar (spec §2.6): plotter and model, power, Home, pen and cursor positions, units. */
 import { css, html, nothing } from "lit";
+import { live } from "lit/directives/live.js";
 import { formatLength, UNITS, type Units } from "../geometry/units";
 import type { Point } from "../geometry/placement";
 import { StoreController } from "../state/store";
@@ -56,7 +57,7 @@ export class RpStatusbar extends AppElement {
       <span>Pen ${where(m.position)}</span>
       <span>Cursor ${where(this.app.cursor.state.point)}</span>
       <span class="spacer"></span>
-      <select aria-label="Units" @change=${(e: Event) => this.app.setUnits((e.target as HTMLSelectElement).value as Units)}>
+      <select aria-label="Units" .value=${live(units)} @change=${(e: Event) => this.app.setUnits((e.target as HTMLSelectElement).value as Units)}>
         ${UNITS.map((u) => html`<option value=${u} ?selected=${u === units}>${u}</option>`)}
       </select>`;
   }

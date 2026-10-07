@@ -73,10 +73,17 @@ export class RpField extends LitElement {
   }
 
   private commit(input: HTMLInputElement): void {
+    const shown = this.format();
+    // Untouched text, or a box that can't be edited: nothing to send (the shown value is rounded).
+    if (this.readonly || this.disabled || input.value.trim() === shown) {
+      input.value = shown;
+      this.invalid = false;
+      return;
+    }
     const value = this.parse(input.value);
     if (value === null) {
       this.invalid = true;
-      input.value = this.format();
+      input.value = shown;
       return;
     }
     this.invalid = false;

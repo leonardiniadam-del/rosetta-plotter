@@ -63,6 +63,22 @@ describe("rp-strip", () => {
   });
 });
 
+describe("notification strip", () => {
+  it("closes Details when a different notice arrives", async () => {
+    const { app } = await startApp();
+    const strip = await mount<HTMLElement & { updateComplete: Promise<unknown> }>("rp-strip");
+    app.notify({ kind: "error", message: "First.", details: "trace one" });
+    await strip.updateComplete;
+    const details = Array.from(shadow(strip).querySelectorAll("button")).find((b) => b.textContent?.trim() === "Details") as HTMLButtonElement;
+    details.click();
+    await strip.updateComplete;
+    expect(shadow(strip).querySelector("pre")?.textContent).toBe("trace one");
+    app.notify({ kind: "error", message: "Second.", details: "trace two" });
+    await strip.updateComplete;
+    expect(shadow(strip).querySelector("pre")).toBeNull();
+  });
+});
+
 describe("rp-dialogs", () => {
   it("asks which page", async () => {
     const { app } = await startApp();
