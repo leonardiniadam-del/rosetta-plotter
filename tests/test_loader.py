@@ -116,6 +116,12 @@ def test_multi_page_pdf_names_the_page(tmp_path):
     assert load_artwork(path).name == "plans (page 1)"
 
 
+def test_a_page_the_pdf_does_not_have_is_explained_with_the_file_name(tmp_path):
+    path = _two_page_pdf(tmp_path / "plans.pdf")
+    with pytest.raises(ImportProblem, match=r"plans\.pdf has 2 pages; choose a page from 1 to 2\."):
+        load_artwork(path, page=2)
+
+
 def test_ai_with_pdf_compatibility_loads(tmp_path):
     pdf = _two_page_pdf(tmp_path / "plans.pdf")
     ai = tmp_path / "drawing.ai"

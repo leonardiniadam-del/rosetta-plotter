@@ -1,5 +1,6 @@
 import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 from lxml import etree
@@ -373,6 +374,61 @@ def test_return_home_with_no_plotter_connected_keeps_the_resume_data():
     result = PlotRunner().return_home(paused.resume_svg, SETTINGS)
     assert result.outcome is PlotOutcome.NOT_CONNECTED
     assert result.resume_svg == paused.resume_svg
+
+
+def test_the_resume_position_in_a_paused_plot_is_in_millimetres():
+    # EMS keeps last_x / last_y in mm in the file (inches only inside the engine), which is what
+    # _HOME_TOLERANCE_MM is compared with.
+    paused, ebb = _plot_and_pause()
+    data = _data(paused.resume_svg)
+    steps_per_mm = 80
+    where = ((ebb.sm_steps1 + ebb.sm_steps2) / 2 / steps_per_mm, (ebb.sm_steps1 - ebb.sm_steps2) / 2 / steps_per_mm)
+    assert (float(data["last_x"]), float(data["last_y"])) == pytest.approx(where, abs=0.05)
+
+
+class _EndsHere:
+    """An EMS stand-in whose "return Home" run finishes normally, with the file saying the pen ended at `output`."""
+
+    def __init__(self, output):
+        self.options = SimpleNamespace()
+        self.plot_status = SimpleNamespace(stopped=0)
+        self._output = output
+
+    def plot_setup(self, svg_text):
+        pass
+
+    def set_up_pause_receiver(self, event):
+        pass
+
+    def plot_run(self, output=False):
+        return self._output
+
+    def disconnect(self):
+        pass
+
+
+def _home_trip_that_ends_at(last_x, last_y):
+    """(the paused plot, the file the trip leaves behind, the runner's result), the pen ending at (last_x, last_y) mm."""
+    paused, _ = _plot_and_pause()
+    output = set_resume_origin_home(paused.resume_svg)
+    output = output.replace('last_x="0"', f'last_x="{last_x}"').replace('last_y="0"', f'last_y="{last_y}"')
+    result = PlotRunner(factory=lambda: _EndsHere(output)).return_home(paused.resume_svg, SETTINGS)
+    return paused, output, result
+
+
+@pytest.mark.parametrize("last_x, last_y", [("1.0", "0"), ("0", "-1.0"), ("0.5", "0.5"), ("2.54", "0")])
+def test_a_pen_a_millimetre_from_home_is_not_treated_as_at_home(last_x, last_y):
+    paused, _output, result = _home_trip_that_ends_at(last_x, last_y)
+    assert result.outcome is PlotOutcome.ERROR
+    assert result.message == "The pen couldn't be moved Home."
+    assert result.resume_svg == paused.resume_svg
+
+
+@pytest.mark.parametrize("last_x, last_y", [("0", "0"), ("0.05", "-0.05"), ("0.099", "0")])
+def test_a_pen_within_a_tenth_of_a_millimetre_of_home_is_at_home(last_x, last_y):
+    _paused, output, result = _home_trip_that_ends_at(last_x, last_y)
+    assert result.outcome is PlotOutcome.COMPLETED
+    assert result.resume_svg == output
 
 
 def test_set_resume_origin_home():

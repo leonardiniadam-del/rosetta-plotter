@@ -89,6 +89,30 @@ def test_missing_page_is_explained(sample_pdf):
         pdf_page_to_svg(sample_pdf, 5)
 
 
+def test_missing_page_names_the_file_and_counts_from_1(sample_pdf):
+    with pytest.raises(ImportProblem) as problem:
+        pdf_page_to_svg(sample_pdf, 5)
+    assert str(problem.value) == "sample.pdf has 2 pages; choose a page from 1 to 2."
+
+
+def test_missing_page_of_a_one_page_pdf_is_singular(tmp_path):
+    path = tmp_path / "single page.pdf"
+    doc = pymupdf.open()
+    doc.new_page(width=200, height=200).draw_line((10, 10), (100, 10))
+    doc.save(path)
+    doc.close()
+    with pytest.raises(ImportProblem) as problem:
+        pdf_page_to_svg(path, 1)
+    assert str(problem.value) == "single page.pdf has 1 page; choose page 1."
+
+
+def test_the_pdf_import_uses_the_svg_readers_public_parser():
+    from rosetta import pdf_import, svgdoc
+
+    assert pdf_import.SVG_PARSER is svgdoc.SVG_PARSER
+    assert not hasattr(svgdoc, "_PARSER") and not hasattr(pdf_import, "_PARSER")
+
+
 def test_negative_page_index_is_explained(sample_pdf):
     with pytest.raises(ImportProblem, match="choose a page from 1 to 2"):
         pdf_page_to_svg(sample_pdf, -1)

@@ -148,6 +148,11 @@ def _paused_plotdata(svg_text: str) -> dict | None:
 
 
 def _at_home(data: dict) -> bool:
+    """Is the pen at Home, going by the plotdata's last_x / last_y?
+
+    EMS keeps those in millimetres in the plot file (inches only inside the engine: plot_status.py
+    multiplies by 25.4 when writing and divides when reading), so they compare with the mm tolerance.
+    """
     try:
         x_mm, y_mm = float(data["last_x"]), float(data["last_y"])
     except (KeyError, TypeError, ValueError):

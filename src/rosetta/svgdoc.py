@@ -34,7 +34,7 @@ IMPLICIT_PX_PER_INCH = {
 # "Responsive" export with minimal IDs, whose user units are points.
 VIEWBOX_ONLY_PX_PER_INCH = 72.0
 
-_PARSER = etree.XMLParser(huge_tree=True, no_network=True)
+SVG_PARSER = etree.XMLParser(huge_tree=True, no_network=True)  # for any SVG text Rosetta reads
 
 
 @dataclass
@@ -74,7 +74,7 @@ def normalize(raw: bytes, source_hint: str | None = None) -> NormalizedSvg:
     if source_hint is not None and source_hint not in IMPLICIT_PX_PER_INCH:
         raise ValueError(f"Unknown source hint: {source_hint}")
     try:
-        root = etree.fromstring(raw, parser=_PARSER)
+        root = etree.fromstring(raw, parser=SVG_PARSER)
     except etree.XMLSyntaxError as exc:
         raise ImportProblem("This file isn't a readable SVG.") from exc
     if not isinstance(root.tag, str) or etree.QName(root).localname != "svg":

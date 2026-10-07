@@ -7,7 +7,7 @@ from lxml import etree
 
 from rosetta.colors import BLACK, is_white, resolve_paint
 from rosetta.errors import ImportProblem
-from rosetta.svgdoc import _PARSER, SVG_NS
+from rosetta.svgdoc import SVG_NS, SVG_PARSER
 
 pymupdf.TOOLS.mupdf_display_errors(False)  # keeps "MuPDF error:" lines out of the console
 
@@ -45,8 +45,11 @@ def pdf_page_to_svg(path: Path, page_index: int = 0) -> PdfPage:
         count = doc.page_count
         if count == 0:
             raise ImportProblem("This PDF has no pages.")
-        if not 0 <= page_index < count:
-            raise ImportProblem(f"This PDF has {count} pages; choose a page from 1 to {count}.")
+        if not 0 <= page_index < count:  # page_index counts from 0; people count from 1
+            name = Path(path).name
+            if count == 1:
+                raise ImportProblem(f"{name} has 1 page; choose page 1.")
+            raise ImportProblem(f"{name} has {count} pages; choose a page from 1 to {count}.")
         try:
             page = doc[page_index]
             svg_text = page.get_svg_image(matrix=pymupdf.Identity, text_as_path=True)
@@ -59,7 +62,7 @@ def pdf_page_to_svg(path: Path, page_index: int = 0) -> PdfPage:
             raise ImportProblem(UNREADABLE) from exc
 
     try:
-        root = etree.fromstring(svg_text.encode("utf-8"), parser=_PARSER)
+        root = etree.fromstring(svg_text.encode("utf-8"), parser=SVG_PARSER)
     except etree.XMLSyntaxError as exc:
         raise ImportProblem(UNREADABLE) from exc
     _blank_image_data(root)
