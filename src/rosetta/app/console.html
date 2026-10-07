@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rosetta Plotter: bridge console</title>
+<style>
+  body { font: 14px "Segoe UI", system-ui, sans-serif; margin: 16px; background: #f3f3f3; color: #1b1b1b; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 12px 0 4px; }
+  p { margin: 0 0 12px; color: #555; }
+  .row { display: flex; gap: 8px; margin-bottom: 8px; }
+  select, input, button { font: inherit; padding: 4px 8px; }
+  input { flex: 1; font-family: Consolas, monospace; }
+  pre { background: #fff; border: 1px solid #ccc; padding: 8px; height: 36vh; overflow: auto; margin: 0;
+        white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Rosetta Plotter: bridge console</h1>
+<p>The student screens aren't built yet. Pick a bridge method, type its arguments as a JSON list, then click Call.</p>
+<div class="row">
+  <select id="method" aria-label="Bridge method"></select>
+  <input id="args" value="[]" aria-label="Arguments as a JSON list">
+  <button id="call">Call</button>
+</div>
+<pre id="reply">Waiting for the bridge...</pre>
+<h2>Events</h2>
+<pre id="events"></pre>
+<script>
+  const reply = document.getElementById("reply");
+  const events = document.getElementById("events");
+  window.rosettaEvent = (name, data) => {
+    events.textContent = `${new Date().toLocaleTimeString()} ${name} ${JSON.stringify(data)}\n` + events.textContent;
+  };
+  window.addEventListener("pywebviewready", () => {
+    const select = document.getElementById("method");
+    for (const name of Object.keys(window.pywebview.api).sort()) {
+      select.add(new Option(name, name));
+    }
+    reply.textContent = "Ready.";
+    document.getElementById("call").addEventListener("click", async () => {
+      let args;
+      try {
+        args = JSON.parse(document.getElementById("args").value || "[]");
+        if (!Array.isArray(args)) throw new Error("Type the arguments as a JSON list, like [10, 5].");
+      } catch (error) {
+        reply.textContent = String(error);
+        return;
+      }
+      reply.textContent = "...";
+      try {
+        reply.textContent = JSON.stringify(await window.pywebview.api[select.value](...args), null, 2);
+      } catch (error) {
+        reply.textContent = `Error: ${error.message || error}`;
+      }
+    });
+  });
+</script>
+</body>
+</html>
