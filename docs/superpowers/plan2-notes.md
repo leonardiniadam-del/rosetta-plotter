@@ -24,3 +24,13 @@ These came out of the code reviews while building the core (Plan 1). Each one is
 ## Compose
 - **Duplicating a piece.** `Placement` is frozen, so use `dataclasses.replace` when duplicating a piece.
 - **Cap the color count.** Cap the number of pen colors shown to students (EMS documents layers 1–1000). Warn when a file has dozens of colors.
+
+## Visual direction (from Adam, 2026-10-07): Rhino 8 as the inspiration
+Adam shared a Rhino 8 screenshot as the look for the app. Architecture students already know Rhino, so a familiar look lowers the learning curve. What to borrow:
+- **Canvas.** A single Top-style view: a gray canvas with a fine grid and the world axes drawn from Home (red = X along the rail, green = Y toward the student). It shows the plotter's reach, the paper and the artwork. There's one view, not four viewports.
+- **Instruction line.** Rhino's command prompt area at the top becomes the plain-language instruction line for the current step ("Slide the pen to the corner next to the HOME label…").
+- **Pens panel.** A right-side panel styled like Rhino's Layers panel lists one row per pen color: swatch, everyday name, show/hide, plot order. This is where the color groups surface.
+- **Tool column.** A slim left tool column with only a few tools: select/move, scale, rotate 90°, center on paper, trace outline. Nothing else.
+- **Snapping.** A small Osnap-style panel snaps artwork to the paper's corners, edges, center and margins.
+- **Status bar.** The bottom status bar shows the live pen X/Y, units (in/mm toggle), plotter connection and model, power OK, and grid snap.
+Keep the spec's step bar, plain language and "Advanced" hiding. Rhino's look should carry the guided flow, not replace it.
