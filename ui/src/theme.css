@@ -40,7 +40,7 @@ body {
   user-select: none;
 }
 
+/* No display here: it would override rp-app's own grid layout (its :host style). */
 rp-app {
-  display: block;
   height: 100%;
 }
