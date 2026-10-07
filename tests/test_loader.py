@@ -4,6 +4,7 @@ import shutil
 
 import pymupdf
 import pytest
+from lxml import etree
 
 from rosetta.errors import ImportProblem
 from rosetta.loader import load_artwork
@@ -182,3 +183,16 @@ def test_pdf_page_sized_border_keeps_all_four_sides(tmp_path):
     assert len(border) == 5
     assert max(x for x, _ in border) == pytest.approx(art.width_mm, abs=0.01)
     assert max(y for _, y in border) == pytest.approx(art.height_mm, abs=0.01)
+
+
+def test_artwork_keeps_its_normalized_drawing_for_the_canvas(tmp_path):
+    path = tmp_path / "logo.svg"
+    path.write_bytes(samples.ILLUSTRATOR_EXPORT)
+    root = etree.fromstring(load_artwork(path).preview_svg.encode("utf-8"))
+    assert float(root.get("width").removesuffix("mm")) == pytest.approx(200, abs=0.001)
+    assert root.get("viewBox") is not None
+
+
+def test_pdf_artwork_has_a_preview_too(tmp_path):
+    art = load_artwork(_two_page_pdf(tmp_path / "two.pdf"), page=1)
+    assert art.preview_svg.startswith("<svg") and "<path" in art.preview_svg

@@ -2,6 +2,8 @@
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from lxml import etree
+
 from rosetta.errors import ImportProblem
 from rosetta.flatten import Shape, flatten_with_report
 from rosetta.geometry import clip_polyline
@@ -30,6 +32,9 @@ class Artwork:
     shapes: list[Shape]
     issues: list[Issue]
     source: str
+    # The normalized drawing as SVG text (mm size, viewBox, CSS inlined), for the app to show under the
+    # lines it will plot. Shown as an <image>, so a student file's scripts never run.
+    preview_svg: str = ""
 
 
 def load_artwork(path: Path, page: int = 0) -> Artwork:
@@ -53,6 +58,7 @@ def load_artwork(path: Path, page: int = 0) -> Artwork:
         doc, name, extra_issues = _read_svg(path)
     else:
         doc, name, extra_issues = _read_pdf(path, page)
+    preview_svg = etree.tostring(doc.root, encoding="unicode")
 
     report = flatten_with_report(doc)
     shapes = report.shapes
@@ -68,7 +74,7 @@ def load_artwork(path: Path, page: int = 0) -> Artwork:
     if blocking:
         explained = [issue.message for issue in issues if issue.code in _SKIPPED_CODES]
         raise ImportProblem(" ".join(explained) if explained else blocking[0].message)
-    return Artwork(name, doc.width_mm, doc.height_mm, shapes, issues, doc.source)
+    return Artwork(name, doc.width_mm, doc.height_mm, shapes, issues, doc.source, preview_svg)
 
 
 def _clip_to_page(shapes: list[Shape], width_mm: float, height_mm: float) -> list[Shape]:
