@@ -4,6 +4,7 @@
  */
 import { css, html, LitElement } from "lit";
 import "./dialogs";
+import "./plate";
 import "./statusbar";
 import "./strip";
 import "./tools";

@@ -2,6 +2,9 @@
 import type { Box, Handle, Point } from "../geometry/placement";
 import { normalizeAngle } from "../geometry/units";
 
+/** The drag-and-drop type for a job dragged from the Jobs list onto the plate. */
+export const JOB_MIME = "application/x-rosetta-job";
+
 export interface IdBox {
   id: string;
   box: Box;
