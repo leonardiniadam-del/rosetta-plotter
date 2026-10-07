@@ -91,3 +91,64 @@ def test_make_axidraw_sends_ems_messages_to_the_log(caplog):
     with caplog.at_level(logging.INFO, logger="rosetta.ems"):
         ad.user_message_fun("Plot paused by keyboard interrupt.")
     assert "Plot paused by keyboard interrupt." in caplog.text
+
+
+from types import SimpleNamespace
+
+from rosetta.engine.options import Advanced, MIN_PEN_TRAVEL, advanced_from_dict
+
+
+def _options_after(settings):
+    ad = SimpleNamespace(options=SimpleNamespace())
+    apply_settings(ad, settings)
+    return ad.options
+
+
+def test_advanced_options_reach_the_engine():
+    advanced = Advanced(
+        pen_up=90, speed_pendown=40, speed_penup=60, accel=50, pen_rate_raise=80,
+        pen_rate_lower=30, pen_delay_up=100, pen_delay_down=200, reordering=4,
+        hiding=True, resolution=2,
+    )
+    o = _options_after(PlotSettings(model=1, pen_down=30, advanced=advanced))
+    assert (o.pen_pos_up, o.speed_pendown, o.speed_penup, o.accel) == (90, 40, 60, 50)
+    assert (o.pen_rate_raise, o.pen_rate_lower, o.pen_delay_up, o.pen_delay_down) == (80, 30, 100, 200)
+    assert (o.reordering, o.hiding, o.resolution) == (4, True, 2)
+
+
+def test_without_overrides_the_pen_type_sets_the_speed():
+    o = _options_after(PlotSettings(model=1, pen_type="brush"))
+    assert (o.speed_pendown, o.speed_penup, o.pen_pos_up, o.accel, o.resolution) == (12, 75, 60, 75, 1)
+
+
+def test_an_advanced_pen_up_height_overrides_the_automatic_one():
+    assert PlotSettings(model=1, pen_down=30, advanced=Advanced(pen_up=45)).pen_up == 45
+
+
+def test_an_advanced_pen_up_height_must_clear_pen_down():
+    settings = PlotSettings(model=1, pen_down=50, advanced=Advanced(pen_up=50 + MIN_PEN_TRAVEL - 1))
+    with pytest.raises(ValueError, match="at least 10 above"):
+        _options_after(settings)
+
+
+@pytest.mark.parametrize("values, message", [
+    ({"accel": 0}, "Acceleration must be from 1 to 100"),
+    ({"reordering": 3}, "Path order must be one of 0, 1, 2, 4"),
+    ({"pen_delay_up": -5}, "from 0 to 1000"),
+    ({"speed_penup": 50.5}, "whole number"),
+    ({"accel": True}, "whole number"),
+    ({"hiding": 1}, "on or off"),
+    ({"warp": 9}, "Unknown advanced option: warp"),
+])
+def test_advanced_from_dict_rejects_bad_values(values, message):
+    with pytest.raises(ValueError, match=message):
+        advanced_from_dict(values)
+
+
+def test_advanced_from_dict_accepts_none_for_the_automatic_values():
+    assert advanced_from_dict({"pen_up": None, "speed_pendown": None, "accel": 60}) == Advanced(accel=60)
+
+
+def test_apply_settings_checks_advanced_values_too():
+    with pytest.raises(ValueError, match="Acceleration"):
+        _options_after(PlotSettings(model=1, advanced=Advanced(accel=500)))
