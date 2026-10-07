@@ -106,6 +106,17 @@ def test_request_pause_when_not_connected_does_nothing():
     Plotter(factory=FakeAD).request_pause()
 
 
+def test_clear_pause_forgets_a_stop_asked_for_while_nothing_moved():
+    plotter, fakes = _connected()
+    plotter.request_pause()
+    plotter.clear_pause()
+    assert not fakes[0].pause_event.is_set()
+
+
+def test_clear_pause_when_not_connected_does_nothing():
+    Plotter(factory=FakeAD).clear_pause()
+
+
 def test_a_pause_request_does_not_outlive_the_connection():
     plotter, fakes = _connected()
     plotter.request_pause()

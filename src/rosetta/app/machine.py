@@ -6,6 +6,7 @@ a second one gets a "still busy" message instead of waiting, except request_stop
 and a plot's end (after_plot, release_motors), which waits its turn.
 """
 import contextlib
+import dataclasses
 import logging
 import threading
 import time
@@ -31,7 +32,7 @@ NOT_CONNECTED = "No plotter is connected. Plug in the USB cable and the power ad
 NEEDS_MODEL = "Choose which AxiDraw this is first."
 NOT_HOMED = ("Slide the pen to the corner next to the HOME label and the USB port, "
              "then click It's in the corner.")
-PLOTTING = "The plotter is plotting. Pause or stop the plot first."
+PLOTTING = "The plotter is in the middle of a plot. Finish or cancel the plot first."
 STOPPED_MOVING = ("The plotter stopped before the move finished. Slide the pen Home, "
                   "then click It's in the corner.")
 NO_POWER = "The power adapter isn't plugged in. The pen can't move without it."
@@ -77,6 +78,7 @@ class Machine:
         self.pen_down = 30
         self.pen_type = "fineliner"
         self.advanced = Advanced()
+        self._clash_logged: tuple[int, int] | None = None  # the pen-up/pen-down clash last logged
 
     # What the page sees.
 
@@ -210,8 +212,8 @@ class Machine:
         return self.status()
 
     def pen(self, down: bool) -> dict:
-        """Raise or lower the pen where it is (the Pen step's buttons)."""
-        with self._using(*_KNOWN) as plotter:
+        """Raise or lower the pen where it is (the Pen step's buttons, which come after Home)."""
+        with self._using(MachineState.READY) as plotter:
             self._check_power(plotter)
             if down:
                 plotter.pen_down()
@@ -254,14 +256,16 @@ class Machine:
         or it was sent Home); otherwise the motors go off so the pen can be slid Home by hand."""
         with self._using(MachineState.PLOTTING, wait=HANDOVER_WAIT_S):
             plotter = self._new_plotter()
-            if not plotter.connect(self._settings()):
-                self._forget()
-                return self.status()
             try:
+                if not plotter.connect(self._settings()):
+                    self._forget()
+                    return self.status()
                 if not at_home:
                     plotter.motors_off()
-            except PlotterStopped:
-                plotter.disconnect()
+            except Exception:  # gone or gone quiet: as good as no plotter, so Step 1 finds it again
+                logger.info("Couldn't take the plotter back after the plot", exc_info=True)
+                with contextlib.suppress(Exception):
+                    plotter.disconnect()
                 self._forget()
                 return self.status()
             self._plotter = plotter
@@ -308,11 +312,14 @@ class Machine:
     def _using(self, *allowed: MachineState, wait: float = 0.0):
         """One request at a time, in a state that allows it. A move that stops partway (Stop, the pause
         button, a pulled cable) leaves the pen's position unknown. A student's request is turned away at
-        once if the plotter is busy; wait > 0 waits that many seconds for it first (a plot's end)."""
+        once if the plotter is busy; wait > 0 waits that many seconds for it first (a plot's end).
+        A Stop clicked while nothing was moving is forgotten, so it can't stop this request's move."""
         got_it = self._lock.acquire(timeout=wait) if wait > 0 else self._lock.acquire(blocking=False)
         if not got_it:
             raise UserProblem(BUSY)
         try:
+            if self._plotter is not None:
+                self._plotter.clear_pause()
             if self.state not in allowed:
                 raise UserProblem(_REFUSALS[self.state])
             yield self._plotter
@@ -333,13 +340,23 @@ class Machine:
             raise UserProblem(NO_POWER)
 
     def _settings(self) -> PlotSettings:
+        """The settings to connect and plot with. The Advanced pen-up height is kept per laptop and the
+        pen-down height per plotter, so the two can clash (e.g. before a plotter's pen is loaded): then
+        the pen-up height is left to Rosetta, rather than every connection failing."""
         identity = self.identity
+        advanced = self.advanced
+        if advanced.pen_up is not None and advanced.pen_up - self.pen_down < MIN_PEN_TRAVEL:
+            if self._clash_logged != (advanced.pen_up, self.pen_down):
+                self._clash_logged = (advanced.pen_up, self.pen_down)
+                logger.warning("Not using the Advanced pen-up height %s: it must be at least %s above the "
+                               "pen-down height %s", advanced.pen_up, MIN_PEN_TRAVEL, self.pen_down)
+            advanced = dataclasses.replace(advanced, pen_up=None)
         return PlotSettings(
             model=identity.model if identity else 1,
             penlift=identity.penlift if identity else 1,
             pen_down=self.pen_down,
             pen_type=self.pen_type,
-            advanced=self.advanced,
+            advanced=advanced,
         )
 
     def _still_there(self) -> bool:

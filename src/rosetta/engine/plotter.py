@@ -72,6 +72,12 @@ class Plotter:
         if self._pause is not None:
             self._pause.set()
 
+    def clear_pause(self) -> None:
+        """Forget a stop asked for while nothing was moving, so it doesn't stop the next move.
+        Safe to call when not connected."""
+        if self._pause is not None:
+            self._pause.clear()
+
     def disconnect(self) -> None:
         """Raise the pen, then let go of the USB port. Safe to call when not connected."""
         ad = self._ad

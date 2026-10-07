@@ -4,7 +4,9 @@ import time
 
 import pytest
 
-from rosetta.app.machine import BUSY, NEEDS_MODEL, NO_POWER, NOT_CONNECTED, Machine, MachineState
+from rosetta.app.machine import (
+    BUSY, NEEDS_MODEL, NO_POWER, NOT_CONNECTED, NOT_HOMED, Machine, MachineState,
+)
 from rosetta.app.settings import SettingsStore
 from rosetta.engine.options import Advanced
 from rosetta.engine.plotter import Plotter
@@ -136,6 +138,14 @@ def test_a_pen_height_too_close_to_the_advanced_pen_up_is_refused(tmp_path):
         machine.set_pen(45, "fineliner")
 
 
+def test_an_advanced_pen_up_too_close_to_the_pen_down_is_set_aside(tmp_path, caplog):
+    machine, _ebb, _bench, _store = _plugged(tmp_path, nickname="m1p1")
+    machine.advanced = Advanced(pen_up=20)  # kept on this laptop; saved next to another plotter's low pen
+    assert machine.scan()["state"] == "not_homed"  # the default pen-down (30) still connects
+    assert machine.plot_settings().advanced.pen_up is None
+    assert "pen-up height" in caplog.text
+
+
 def test_plot_settings_need_a_known_plotter(tmp_path):
     machine, _bench, _store = make_machine(tmp_path)
     with pytest.raises(UserProblem, match=NOT_CONNECTED):
@@ -178,6 +188,13 @@ def test_pen_up_and_down(tmp_path):
     assert ebb.pen_cmds[-1][0] == "up"
 
 
+def test_the_pen_moves_only_once_homed(tmp_path):
+    machine, _ebb, _bench, _store = _plugged(tmp_path, nickname="m1p1")
+    machine.scan()
+    with pytest.raises(UserProblem, match=NOT_HOMED):
+        machine.pen(True)
+
+
 def test_trace_and_test_mark_end_at_home(tmp_path):
     machine, ebb, _bench = _ready(tmp_path)
     machine.goto(30, 30)
@@ -202,16 +219,37 @@ def test_stop_ends_a_move(tmp_path):
     assert machine.state is MachineState.NOT_HOMED
 
 
+def test_a_stop_clicked_while_nothing_moves_does_not_stop_the_next_move(tmp_path):
+    machine, _ebb, _bench = _ready(tmp_path)
+    machine.request_stop()  # a late click, after the move it was meant for had ended
+    assert machine.goto(20, 10)["position"] == pytest.approx([20, 10])
+    assert machine.state is MachineState.READY
+
+
 def test_the_plotter_is_handed_over_for_a_plot_and_taken_back(tmp_path):
     machine, _ebb, _bench = _ready(tmp_path)
     machine.goto(30, 30)
     settings = machine.release_for_plot()
     assert machine.state is MachineState.PLOTTING and settings.model == 1
-    with pytest.raises(UserProblem, match="plotting"):
+    with pytest.raises(UserProblem, match="in the middle of a plot. Finish or cancel"):
         machine.goto(5, 5)
     assert machine.after_plot(at_home=True)["state"] == "ready"
     machine.release_for_plot()
     assert machine.after_plot(at_home=False)["state"] == "not_homed"
+
+
+def _goes_quiet(*_args):
+    raise IndexError("list index out of range")  # serial_utils, when a port stops answering
+
+
+@pytest.mark.parametrize("step, at_home", [("connect", True), ("motors_off", False)])
+def test_a_plotter_that_goes_quiet_after_a_plot_is_let_go(tmp_path, monkeypatch, step, at_home):
+    machine, _ebb, _bench = _ready(tmp_path)
+    machine.release_for_plot()
+    with monkeypatch.context() as patch:
+        patch.setattr(Plotter, step, _goes_quiet)
+        assert machine.after_plot(at_home=at_home)["state"] == "no_plotter"  # not stuck "plotting"
+    assert machine.scan()["state"] == "not_homed"  # Step 1 finds it again
 
 
 def _hold_the_lock_briefly(machine, seconds=0.2) -> threading.Thread:

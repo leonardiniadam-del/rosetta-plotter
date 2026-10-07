@@ -127,6 +127,19 @@ def test_pen_settings_are_remembered_per_plotter(tmp_path):
     assert (machine["pen_down"], machine["pen_type"]) == (45, "marker")
 
 
+def test_a_legal_advanced_pen_up_never_hides_the_plotter_later(tmp_path):
+    """Advanced pen-up is kept per laptop, pen-down per plotter (loaded only once it's found): the next
+    launch connects at the default pen-down, below this pen-up, and must still find the plotter."""
+    ebb = _plotter()
+    api, _sink = make_api(tmp_path, ebb)
+    ok(api.plotter_scan())
+    ok(api.pen_set(5, "fineliner"))
+    ok(api.set_advanced({"pen_up": 20}))
+    next_launch, _sink = make_api(tmp_path, ebb)
+    machine = ok(next_launch.plotter_scan())["machine"]
+    assert (machine["state"], machine["pen_down"]) == ("not_homed", 5)
+
+
 def test_mark_this_corner_uses_the_pen_position(tmp_path):
     api, _sink = make_api(tmp_path, _plotter())
     ok(api.plotter_scan())
