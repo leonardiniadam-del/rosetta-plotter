@@ -149,7 +149,9 @@ class Api:
         with self._store.change() as settings:
             advanced = dataclasses.replace(settings.advanced, **values)
             pen_down = self._machine.pen_down
-            if advanced.pen_up is not None and advanced.pen_up - pen_down < MIN_PEN_TRAVEL:
+            # Checked only when pen-up itself changes: a clash left from another plotter's pen-down is set
+            # aside when connecting (Machine._settings), and mustn't block unrelated options.
+            if "pen_up" in values and advanced.pen_up is not None and advanced.pen_up - pen_down < MIN_PEN_TRAVEL:
                 raise UserProblem(
                     f"Pen-up height must be at least {MIN_PEN_TRAVEL} above the pen-down height ({pen_down})."
                 )

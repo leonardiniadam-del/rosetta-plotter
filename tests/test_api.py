@@ -237,3 +237,13 @@ def test_the_file_picker(tmp_path):
     assert not api.artwork_choose()["ok"]
     api._attach_window(None, choose_files=lambda: ("C:\\a.svg", "C:\\b.pdf"))
     assert ok(api.artwork_choose())["paths"] == ["C:\\a.svg", "C:\\b.pdf"]
+
+
+def test_an_old_pen_up_clash_does_not_block_other_advanced_options(tmp_path):
+    api, _sink = make_api(tmp_path)
+    ok(api.pen_set(5, "fineliner"))
+    ok(api.set_advanced({"pen_up": 20}))
+    api._machine.pen_down = 30  # as another plotter's saved pen-down would (pen_set itself refuses a clash)
+    assert ok(api.set_advanced({"accel": 60}))["advanced"]["accel"] == 60
+    refused = api.set_advanced({"pen_up": 25})
+    assert not refused["ok"] and "at least 10 above" in refused["message"]
