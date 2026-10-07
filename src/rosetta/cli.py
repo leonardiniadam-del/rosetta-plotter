@@ -3,6 +3,7 @@
 Students use the app (Plan 2). This tool exists so plots can be tested on hardware early.
 
     rosetta-plot prepare job.json -o out\\plot   -> out\\plot.svg + out\\plot.json
+    rosetta-plot prepare job.json --model 5 -o out\\plot   (--model replaces the job file's model)
     rosetta-plot estimate out\\plot.svg
     rosetta-plot info
     rosetta-plot identify --model 5 --label "PSU Lab"
@@ -10,35 +11,45 @@ Students use the app (Plan 2). This tool exists so plots can be tested on hardwa
     rosetta-plot trace out\\plot.svg
     rosetta-plot plot out\\plot.svg --pen-down 30 --pen-type fineliner
     rosetta-plot plot out\\plot.svg --resume
+    rosetta-plot plot out\\plot.svg --start-layer 2
 
 Safety rules every command follows:
   * trace, plot and pen first check the power adapter and that the job's model is the plotter's
     model, then switch the motors off so the carriage slides by hand when it is asked to be
     slid Home (EMS never releases the motors on its own);
   * anything that stops a plot (Ctrl+C, a lost cable) leaves the pen up and the progress in
-    <plot>.resume.svg (with <plot>.resume.json recording which plot.svg it belongs to), and tells
-    him how to continue; a finished layer clears it, so old progress is never offered again.
+    <plot>.resume.svg (with <plot>.resume.json recording which plot.svg it belongs to, and the pen
+    settings used), and tells the person how to continue; a finished layer clears it, so old
+    progress is never offered again.
+
+What happened is kept in rosetta-plot.log next to the plot (or the job), else in the temp folder.
 """
 import argparse
+import contextlib
 import dataclasses
 import hashlib
 import json
+import logging
 import math
 import os
+import re
 import signal
 import sys
+import tempfile
 import threading
 from pathlib import Path
 
 from rosetta.compose import Material, PlacedPiece, Placement, compose_job, initial_placement
 from rosetta.engine.identity import Identity, encode_nickname
 from rosetta.engine.options import PEN_DOWN_MAX, PlotSettings
-from rosetta.engine.plotter import IdentityWrite, Plotter, PlotterStopped
+from rosetta.engine.plotter import IdentityWrite, Plotter, PlotterStopped, mark_start
 from rosetta.engine.runner import PlotOutcome, PlotRunner, estimate, paused_layer, set_resume_origin_home
 from rosetta.errors import ImportProblem
 from rosetta.loader import load_artwork
 from rosetta.models import MODELS, PEN_TYPES, get_model
 from rosetta.plotsvg import plot_svg
+
+logger = logging.getLogger(__name__)
 
 SLIDE_HOME = "Slide the pen to the corner next to the HOME label and the USB port, then press Enter. "
 NO_PLOTTER = "No plotter found. Plug in the USB cable and the power adapter."
@@ -49,8 +60,12 @@ CHECK_CABLE_AND_POWER = "Check the cable and power, then press Enter (or type q 
 PAUSED_MENU = "Paused. Type r to resume, h to send the pen Home first, or q to stop: "
 UNREACHABLE = ("The plotter can't be reached, so the pen may still be down and the motors on. "
                "Unplug the power adapter, lift the pen by hand if needed, then slide it Home.")
-NOTHING_TO_RESUME = ("Nothing to resume: the layers so far are finished. "
-                     "To plot the remaining colors, prepare a job with only those colors.")
+SKIP_MODEL_CHECK = ("add --skip-model-check to plot, trace or pen "
+                    "(make sure the job's model matches your plotter)")
+NOTHING_TO_RESUME = "Nothing to resume: the layers so far are finished."
+LOG_NAME = "rosetta-plot.log"
+DEFAULT_PEN_DOWN = 30
+DEFAULT_PEN_TYPE = "fineliner"
 
 
 def format_duration(seconds: float) -> str:
@@ -124,7 +139,12 @@ def _read_json(path: Path, not_found: str = "", broken: str = "") -> dict:
 def cmd_prepare(args) -> int:
     where = str(args.job)
     job = _read_json(args.job)
-    model_number = _get(job, "model", where, "whole")
+    if args.model is not None:  # --model replaces whatever the job file says, so one job file serves any machine
+        model_number = args.model
+        if "model" in job and job["model"] != model_number:
+            print(f"Using model {model_number} (from --model), not the job file's model {job['model']}.")
+    else:
+        model_number = _get(job, "model", where, "whole")
     if model_number not in MODELS:
         known = ", ".join(str(number) for number in sorted(MODELS))
         raise JobProblem(f'{where}: "model" should be one of {known}, not {model_number}')
@@ -222,8 +242,8 @@ def _settings(args, meta) -> PlotSettings:
     return PlotSettings(
         model=meta["model"],
         penlift=getattr(args, "penlift", None) or 1,
-        pen_down=getattr(args, "pen_down", 30),
-        pen_type=getattr(args, "pen_type", "fineliner"),
+        pen_down=getattr(args, "pen_down", DEFAULT_PEN_DOWN),
+        pen_type=getattr(args, "pen_type", DEFAULT_PEN_TYPE),
     )
 
 
@@ -253,14 +273,21 @@ def cmd_info(args) -> int:
         if identity:
             print(f"Model: {get_model(identity.model).name} (label: {identity.label or 'none'})")
         else:
-            print("Model: unknown. Run: rosetta-plot identify --model N")
+            name = plotter.nickname()  # a name some other software stored, which is not ours
+            named = f' (plotter is named "{name}")' if name else ""
+            print(f"Model: unknown{named}. Run: rosetta-plot identify --model N")
+        plotter.motors_off()  # connecting switched them on; leave the carriage free to slide by hand
+        print("The motors are off, so the carriage slides by hand.")
+    except PlotterStopped as lost:
+        print(f"{lost} Check the USB cable and try again.")
+        return 1
     finally:
         plotter.disconnect()
     return 0
 
 
 def _may_replace_name(plotter: Plotter, identity: Identity) -> bool:
-    """False if the plotter already has a different name and he doesn't confirm replacing it."""
+    """False if the plotter already has a different name and the person doesn't confirm replacing it."""
     current = plotter.nickname()
     if not current or current.strip() == encode_nickname(identity):
         return True
@@ -289,9 +316,11 @@ def cmd_identify(args) -> int:
               "Wait a few seconds for it to restart before the next command.")
         return 0
     if result is IdentityWrite.FIRMWARE_TOO_OLD:
-        print("This plotter's firmware is too old to store its model (needs 2.5.5 or newer).")
+        print("This plotter's firmware is too old to store its model (needs 2.5.5 or newer). "
+              f"You can still use it: {SKIP_MODEL_CHECK}.")
     elif result is IdentityWrite.FIRMWARE_UNKNOWN:
-        print("Could not read this plotter's firmware version, so its model was not stored. Try again.")
+        print("Could not read this plotter's firmware version, so its model was not stored. "
+              f"Try again, or {SKIP_MODEL_CHECK}.")
     else:
         print("The plotter did not accept the model. Check the USB cable and try again.")
     return 1
@@ -305,7 +334,7 @@ def _model_ok(identity: Identity | None, job_model: int, skip: bool, from_job: b
         if skip:
             print("Skipping the model check: this plotter's model isn't stored.")
             return True
-        print("This plotter's model isn't stored yet. Run: rosetta-plot identify --model N")
+        print(f"This plotter's model isn't stored yet. Run: rosetta-plot identify --model N, or {SKIP_MODEL_CHECK}.")
         return False
     if identity.model == job_model:
         return True
@@ -321,16 +350,19 @@ def _model_ok(identity: Identity | None, job_model: int, skip: bool, from_job: b
     return False
 
 
-def _preflight(args, job_model: int, from_job: bool = True) -> PlotSettings | None:
+def _preflight(args, job_model: int, from_job: bool = True,
+               penlift_from: str = "you asked for") -> PlotSettings | None:
     """Make sure it is safe to move the plotter, then let go of its motors so the carriage slides.
 
     Needs the power adapter in and (unless --skip-model-check) a plotter whose stored model is
     the job's. Returns the settings to plot with, or None after saying what is wrong.
+    `penlift_from` says, in the note about a pen lift that differs from the plotter's stored one,
+    where args.penlift came from.
     """
     asked = args.penlift  # None unless --penlift was given
     wanted = PlotSettings(
         model=job_model, penlift=asked or 1, pen_down=args.pen_down,
-        pen_type=getattr(args, "pen_type", "fineliner"),
+        pen_type=getattr(args, "pen_type", DEFAULT_PEN_TYPE),
     )
     plotter = Plotter()
     if not plotter.connect(wanted):
@@ -343,7 +375,7 @@ def _preflight(args, job_model: int, from_job: bool = True) -> PlotSettings | No
         identity = plotter.read_identity()
         if not _model_ok(identity, job_model, getattr(args, "skip_model_check", False), from_job):
             return None
-        plotter.motors_off()  # EMS leaves them holding the carriage; he is about to slide it
+        plotter.motors_off()  # EMS leaves them holding the carriage; the person is about to slide it
     except PlotterStopped as lost:
         print(f"{lost} Check the USB cable and try again.")
         return None
@@ -351,7 +383,7 @@ def _preflight(args, job_model: int, from_job: bool = True) -> PlotSettings | No
         plotter.disconnect()
     stored = identity.penlift if identity else None
     if asked is not None and stored is not None and asked != stored:
-        print(f"Note: this plotter has pen lift {stored} stored, but you asked for {asked}. Using {asked}.")
+        print(f"Note: this plotter has pen lift {stored} stored, but {penlift_from} {asked}. Using {asked}.")
     return dataclasses.replace(wanted, penlift=asked or stored or 1)
 
 
@@ -370,7 +402,7 @@ def _release_motors(settings: PlotSettings) -> bool:
 
 
 def _say_it_stopped(what: str, stopped: PlotterStopped, settings: PlotSettings) -> None:
-    """After a trace or pen test stopped partway: free the carriage, then tell him to slide it Home.
+    """After a trace or pen test stopped partway: free the carriage, then tell the person to slide it Home.
 
     Call it with the plotter's port closed; it opens the plotter once more to switch the motors off.
     """
@@ -427,12 +459,16 @@ def cmd_pen(args) -> int:
     stopped = None
     try:
         plotter.set_pen_down_height(args.pen_down)
+        if args.mark:  # check the height where the test line will start: Home may be the paper's exact corner
+            x, y = args.mark
+            start_x, start_y = mark_start(x, y)
+            print(f"Moving the pen (up) to where the test line starts: {start_x:g} mm, {start_y:g} mm from Home.")
+            _run_interruptibly(lambda: plotter.goto(start_x, start_y), _stop_moving(plotter))
         plotter.pen_down()
         input(f"The pen is down at {args.pen_down}%. Check it just touches the paper, "
               "then press Enter to raise it. ")
         plotter.pen_up()
         if args.mark:
-            x, y = args.mark
             _run_interruptibly(lambda: plotter.test_mark(x, y), _stop_moving(plotter))
             print(f"Drew a 10 mm test line near ({x:g}, {y:g}) and returned Home.")
         else:
@@ -548,6 +584,58 @@ def _fingerprint(plot: Path, model: int) -> dict:
     return {"plot": svg.name, "sha256": hashlib.sha256(svg.read_bytes()).hexdigest(), "model": model}
 
 
+_PEN_FLAGS = (("pen_down", "--pen-down"), ("pen_type", "--pen-type"), ("penlift", "--penlift"))
+
+
+def _pen_settings(settings: PlotSettings) -> dict:
+    return {"pen_down": settings.pen_down, "pen_type": settings.pen_type, "penlift": settings.penlift}
+
+
+def _pen_flags(settings: PlotSettings) -> str:
+    """The flags that give these pen settings, for a command the person can paste back in."""
+    return f"--pen-down {settings.pen_down} --pen-type {settings.pen_type} --penlift {settings.penlift}"
+
+
+def _quoted(path) -> str:
+    """The path as it is typed in a command: in quotes if it has spaces or other characters a shell reads."""
+    text = str(path)
+    return f'"{text}"' if re.search(r"[\s&()\[\]{}^=;!'+,`~@%$#]", text) else text
+
+
+def _saved_pen_settings(note: dict) -> dict:
+    """The pen settings a resume note records. Anything missing or not usable is left out."""
+    kept = note.get("settings")
+    if not isinstance(kept, dict):
+        return {}
+    usable = {}
+    pen_down, pen_type, penlift = kept.get("pen_down"), kept.get("pen_type"), kept.get("penlift")
+    if isinstance(pen_down, int) and not isinstance(pen_down, bool) and 0 <= pen_down <= PEN_DOWN_MAX:
+        usable["pen_down"] = pen_down
+    if isinstance(pen_type, str) and pen_type in PEN_TYPES:
+        usable["pen_type"] = pen_type
+    if isinstance(penlift, int) and not isinstance(penlift, bool) and penlift in (1, 2, 3):
+        usable["penlift"] = penlift
+    return usable
+
+
+def _use_saved_pen_settings(args, saved: dict) -> bool:
+    """Resuming: pen settings the person didn't give as flags come from the plot that was stopped.
+    A flag that was given wins, and a note says so if it differs. True if the pen lift came from the saved plot."""
+    typed = getattr(args, "asked", set())
+    differing = []
+    for name, flag in _PEN_FLAGS:
+        if name not in saved:
+            continue
+        if name not in typed:
+            setattr(args, name, saved[name])
+        elif getattr(args, name) != saved[name]:
+            differing.append(f"{flag} {getattr(args, name)} (was {saved[name]})")
+    if differing:
+        print("Note: the paused plot used different pen settings; using what you asked for: "
+              + ", ".join(differing) + ".")
+    return "penlift" in saved and "penlift" not in typed
+
+
 def _write_atomically(path: Path, text: str) -> None:
     """Write so that an interruption leaves the old file or the new one, never half of one."""
     scratch = path.with_name(path.name + ".tmp")
@@ -555,8 +643,9 @@ def _write_atomically(path: Path, text: str) -> None:
     os.replace(scratch, path)
 
 
-def _load_resume(resume_file: Path, layers: list[dict], plot: Path, model: int) -> tuple[str, int]:
-    """A saved paused plot and the position (in `layers`) of the layer it will finish.
+def _load_resume(resume_file: Path, layers: list[dict], plot: Path, model: int) -> tuple[str, int, dict]:
+    """A saved paused plot, the position (in `layers`) of the layer it will finish, and the pen
+    settings it was drawn with (those of them that were saved).
 
     Refuses progress saved for another version of the plot: the saved copy would be drawn from
     the old geometry while later layers come from the new plot.svg.
@@ -567,7 +656,7 @@ def _load_resume(resume_file: Path, layers: list[dict], plot: Path, model: int) 
     cannot_tell = f" — can't tell which version of {svg_name} this saved progress belongs to. "
     saved = _read_json(_note_path(resume_file), cannot_tell + "Start the plot over instead.",
                        ". Start the plot over instead.")
-    if saved != _fingerprint(plot, model):
+    if any(saved.get(key) != value for key, value in _fingerprint(plot, model).items()):
         raise JobProblem(f"This saved progress belongs to a different version of {svg_name} — it was "
                          "prepared again after you stopped. Start the plot over instead.")
     number = paused_layer(text)
@@ -575,8 +664,23 @@ def _load_resume(resume_file: Path, layers: list[dict], plot: Path, model: int) 
         raise JobProblem(f"{resume_file} doesn't hold a paused plot that can be resumed.")
     for index, layer in enumerate(layers):
         if layer["layer"] == number:
-            return text, index
+            return text, index, _saved_pen_settings(saved)
     raise JobProblem(f"{resume_file} is for layer {number}, which this plot doesn't have.")
+
+
+def _start_index(args, layer_count: int) -> int | None:
+    """Where --start-layer N says to begin (a 0-based position), or None if it wasn't given."""
+    start = args.start_layer
+    if start is None:
+        return None
+    if args.resume:
+        raise JobProblem("--start-layer and --resume can't be used together: "
+                         "--resume carries on with the layer that was paused.")
+    if not 1 <= start <= layer_count:
+        plural = "" if layer_count == 1 else "s"
+        choose = "1" if layer_count == 1 else f"1 to {layer_count}"
+        raise JobProblem(f"--start-layer {start}: this plot has {layer_count} layer{plural}; choose {choose}.")
+    return start - 1
 
 
 def _print_estimate(svg: str, layers: list[dict], settings: PlotSettings) -> None:
@@ -590,9 +694,10 @@ def _print_estimate(svg: str, layers: list[dict], settings: PlotSettings) -> Non
 class _PlotRun:
     """Plots the layers one pen at a time, keeping the machine safe through pauses and cable pulls.
 
-    Progress is saved to <plot>.resume.svg (and <plot>.resume.json, naming the plot it is for)
-    whenever a run leaves resume data behind, and deleted again as soon as a layer is finished,
-    so what is on disk is always the progress of a layer that still needs finishing.
+    Progress is saved to <plot>.resume.svg (and <plot>.resume.json, naming the plot it is for and
+    the pen settings it used) whenever a run leaves resume data behind, and deleted again as soon
+    as a layer is finished, so what is on disk is always the progress of a layer that still needs
+    finishing.
     """
 
     def __init__(self, svg: str, layers: list[dict], settings: PlotSettings, plot_path: Path,
@@ -603,7 +708,7 @@ class _PlotRun:
         self.plot_path = plot_path
         self.resume_file = _resume_path(plot_path)
         self.note_file = _note_path(self.resume_file)
-        self.fingerprint = _fingerprint(plot_path, settings.model)
+        self.note = {**_fingerprint(plot_path, settings.model), "settings": _pen_settings(settings)}
         self.runner = PlotRunner()
         self.layers_done = layers_done  # layers completely drawn, in this or an earlier session
         self.saved = saved  # is there a current resume file (saved earlier, or by this session)?
@@ -667,11 +772,13 @@ class _PlotRun:
             print("Stopped. The motors are off — slide the pen Home before the next plot.")
         else:
             print(f"Stopped. {UNREACHABLE}")
+        plot, flags = _quoted(self.plot_path), _pen_flags(self.settings)
         if self.saved:
             print(f"Progress is saved in {self.resume_file}. "
-                  f"To finish later: rosetta-plot plot {self.plot_path} --resume")
+                  f"To finish later: rosetta-plot plot {plot} --resume {flags}")
         elif self.layers_done:
-            print(NOTHING_TO_RESUME)
+            print(f"{NOTHING_TO_RESUME} To plot the remaining colors: "
+                  f"rosetta-plot plot {plot} --start-layer {self.layers_done + 1} {flags}")
         return False
 
     def _attempt(self, action: str, number: int, resume_svg: str | None):
@@ -696,7 +803,7 @@ class _PlotRun:
 
     def _save(self, resume_svg: str) -> None:
         try:
-            _write_atomically(self.note_file, json.dumps(self.fingerprint))
+            _write_atomically(self.note_file, json.dumps(self.note))
             _write_atomically(self.resume_file, resume_svg)
         except OSError as problem:
             print(f"Couldn't save progress to {self.resume_file}: {problem}")
@@ -720,8 +827,8 @@ class _PlotRun:
             print(f"  Details: {result.details}")
 
     def _rehome(self, resume_svg: str, prompt: str) -> str | None:
-        """Wait for the plotter to be reachable and for him to slide the pen Home by hand; the
-        resume data, now starting from Home. None if he'd rather stop."""
+        """Wait for the plotter to be reachable and for the person to slide the pen Home by hand; the
+        resume data, now starting from Home. None if they'd rather stop."""
         while True:
             if _wants_to_stop(input(prompt)):
                 return None
@@ -732,31 +839,43 @@ class _PlotRun:
         return set_resume_origin_home(resume_svg)
 
 
+def _pen_prompt(layers: list[dict], index: int, in_holder: bool) -> str:
+    layer = layers[index]
+    holder = " in the holder" if in_holder else ""
+    return f"Load the {layer['name']} pen ({layer['color']}; {index + 1} of {len(layers)}){holder}, then press Enter. "
+
+
 def cmd_plot(args) -> int:
     svg, meta = _read_plot(args.plot)
     layers = meta["layers"]
+    start = _start_index(args, len(layers))
     resume_file = _resume_path(args.plot)
-    resume_svg, first = None, 0
+    resume_svg, first, penlift_from = None, start or 0, "you asked for"
     if args.resume:
-        resume_svg, first = _load_resume(resume_file, layers, args.plot, meta["model"])
-    settings = _preflight(args, meta["model"])
+        resume_svg, first, saved = _load_resume(resume_file, layers, args.plot, meta["model"])
+        if _use_saved_pen_settings(args, saved):
+            penlift_from = "the paused plot used"
+    settings = _preflight(args, meta["model"], penlift_from=penlift_from)
     if settings is None:
         return 1
     if resume_svg is None:
         if resume_file.exists():
-            print(f"Note: a paused plot is saved in {resume_file}, and starting over replaces it. "
-                  f"To continue that one instead, press Ctrl+C now and run: rosetta-plot plot {args.plot} --resume")
-        _print_estimate(svg, layers, settings)
+            print(f"Note: a paused plot is saved in {resume_file}, and starting over replaces it. To continue "
+                  f"that one instead, press Ctrl+C now and run: rosetta-plot plot {_quoted(args.plot)} --resume")
+        _print_estimate(svg, layers[first:], settings)
 
     run = _PlotRun(svg, layers, settings, args.plot, layers_done=first, saved=resume_svg is not None)
     try:
-        input(SLIDE_HOME)
-        if resume_svg is not None:
-            resume_svg = set_resume_origin_home(resume_svg)  # he has just slid the pen Home
         for index in range(first, len(layers)):
-            layer = layers[index]
-            input(f"Load the {layer['name']} pen ({layer['color']}; {index + 1} of {len(layers)}), "
-                  "then press Enter. ")
+            if index == first:
+                # The pre-flight switched the motors off. Pushing a pen into the holder can move the
+                # carriage, so the pen goes in first and the carriage is slid Home afterwards.
+                input(_pen_prompt(layers, index, in_holder=True))
+                input(SLIDE_HOME)
+                if resume_svg is not None:
+                    resume_svg = set_resume_origin_home(resume_svg)  # the pen has just been slid Home
+            else:  # between layers the motors hold the carriage Home
+                input(_pen_prompt(layers, index, in_holder=False))
             if not run.plot_layer(index, resume_svg if index == first else None):
                 return 1
     except (KeyboardInterrupt, EOFError):  # at a prompt, where Ctrl+C can't pause anything
@@ -777,13 +896,62 @@ def _pen_height(text: str) -> int:
 
 
 def _add_pen_arguments(parser, pen_type: bool = True) -> None:
-    parser.add_argument("--pen-down", type=_pen_height, default=30,
-                        help=f"pen-down height, percent (0-{PEN_DOWN_MAX})")
+    # No defaults here: a plot being resumed takes the settings it was stopped with unless a flag is
+    # given. main() fills in the defaults afterwards (see _use_pen_defaults).
+    parser.add_argument("--pen-down", type=_pen_height, default=None,
+                        help=f"pen-down height, percent (0-{PEN_DOWN_MAX}; default {DEFAULT_PEN_DOWN})")
     if pen_type:
-        parser.add_argument("--pen-type", choices=sorted(PEN_TYPES), default="fineliner")
+        parser.add_argument("--pen-type", choices=sorted(PEN_TYPES), default=None,
+                            help=f"default {DEFAULT_PEN_TYPE}")
     parser.add_argument("--penlift", type=int, choices=[1, 2, 3], default=None,
                         help="pen-lift type (1 = model default, 2 = standard servo, 3 = brushless); "
                              "normally read from the plotter, so give it only to override that")
+
+
+def _use_pen_defaults(args) -> set[str]:
+    """Fill in the default pen height and type where no flag gave them. Returns the names of the pen
+    settings that WERE given as flags (and so beat anything saved by a plot that was stopped)."""
+    given = {name for name, _flag in _PEN_FLAGS if getattr(args, name, None) is not None}
+    for name, default in (("pen_down", DEFAULT_PEN_DOWN), ("pen_type", DEFAULT_PEN_TYPE)):
+        if hasattr(args, name) and getattr(args, name) is None:
+            setattr(args, name, default)
+    return given
+
+
+def _open_log(args) -> tuple[logging.Handler | None, Path | None]:
+    """The log file for this command: next to the plot or job it names, else in the temp folder."""
+    named = getattr(args, "plot", None) or getattr(args, "job", None)
+    folders = [Path(tempfile.gettempdir())]
+    if named is not None:
+        folders.insert(0, Path(named).parent)
+    for folder in folders:
+        try:
+            handler = logging.FileHandler((folder / LOG_NAME).resolve(), mode="a", encoding="utf-8")
+        except (OSError, ValueError):  # no such folder, read-only, a name Windows won't take, ...
+            continue
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        return handler, Path(handler.baseFilename)
+    return None, None
+
+
+@contextlib.contextmanager
+def _logging_to_file(args):
+    """For one command, keep what rosetta and the EMS engine report in the log file. Yields the log's
+    path (None if no log file could be opened). Logging is left as it was found."""
+    handler, path = _open_log(args)
+    root = logging.getLogger("rosetta")  # also the parent of rosetta.ems, where EMS's messages go
+    previous_level = root.level
+    if handler is not None:
+        root.addHandler(handler)
+        if root.getEffectiveLevel() > logging.INFO:
+            root.setLevel(logging.INFO)
+    try:
+        yield path
+    finally:
+        if handler is not None:
+            root.removeHandler(handler)
+            handler.close()
+            root.setLevel(previous_level)
 
 
 def _add_skip_model_check(parser) -> None:
@@ -807,6 +975,8 @@ def main(argv=None) -> int:
     prepare = commands.add_parser("prepare", help="turn a job file into a plot-ready SVG")
     prepare.add_argument("job", type=Path)
     prepare.add_argument("-o", "--out", type=Path, required=True)
+    prepare.add_argument("--model", type=int, choices=sorted(MODELS),
+                         help="plotter model number to prepare for, instead of the job file's \"model\"")
 
     estimate_cmd = commands.add_parser("estimate", help="estimate plot time")
     estimate_cmd.add_argument("plot", type=Path)
@@ -825,8 +995,8 @@ def main(argv=None) -> int:
     pen.add_argument("--model", type=int, required=True, choices=sorted(MODELS))
     _add_pen_arguments(pen, pen_type=False)
     pen.add_argument("--mark", type=float, nargs=2, metavar=("X", "Y"),
-                     help="after raising the pen, draw a 10 mm test line near the paper corner at X Y "
-                          "(mm from Home), then return Home")
+                     help="check the pen height 5 mm in from the paper corner at X Y (mm from Home), where "
+                          "a 10 mm test line then starts; the pen returns Home afterwards")
     _add_skip_model_check(pen)
 
     trace = commands.add_parser("trace", help="trace the drawing's outline with the pen up")
@@ -838,20 +1008,35 @@ def main(argv=None) -> int:
     plot.add_argument("plot", type=Path)
     _add_pen_arguments(plot)
     plot.add_argument("--resume", action="store_true",
-                      help="finish a plot you stopped earlier (saved next to the plot as <name>.resume.svg)")
+                      help="finish a plot you stopped earlier (saved next to the plot as <name>.resume.svg); "
+                           "it keeps the pen settings that plot used, unless you give flags")
+    plot.add_argument("--start-layer", type=int, metavar="N",
+                      help="start a new plot at layer N (1 is the first), for the colors still to do")
     _add_skip_model_check(plot)
 
     args = parser.parse_args(argv)
+    args.asked = _use_pen_defaults(args)
     handlers = {
         "prepare": cmd_prepare, "estimate": cmd_estimate, "info": cmd_info,
         "identify": cmd_identify, "pen": cmd_pen, "trace": cmd_trace, "plot": cmd_plot,
     }
     _tolerate_any_text()
-    try:
-        return handlers[args.command](args)
-    except (ImportProblem, ValueError) as problem:  # includes JobProblem
-        print(str(problem))
-        return 2
-    except (KeyboardInterrupt, EOFError):
-        print("\nStopped.")
-        return 130
+    with _logging_to_file(args) as log_path:
+        logger.info("rosetta-plot %s", " ".join(sys.argv[1:] if argv is None else (str(part) for part in argv)))
+        try:
+            code = handlers[args.command](args)
+        except (ImportProblem, ValueError) as problem:  # includes JobProblem
+            logger.error("%s", problem, exc_info=not isinstance(problem, (ImportProblem, JobProblem)))
+            print(str(problem))
+            code = 2
+        except (KeyboardInterrupt, EOFError):
+            print("\nStopped.")
+            code = 130
+        except Exception as problem:  # a bug, or something odd with the plotter or the computer
+            logger.exception("Unexpected error")
+            print(f"Something unexpected went wrong: {type(problem).__name__}: {problem}")
+            code = 1
+        logger.info("Finished with exit code %s", code)
+        if code not in (0, 130) and log_path is not None:  # 130 is the person stopping it on purpose
+            print(f"Details were saved to {log_path}.")
+    return code

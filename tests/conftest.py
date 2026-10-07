@@ -5,6 +5,8 @@ The EMS engine finds a plotter by listing the computer's serial ports; that whol
 switched off for every test. A test that wants a plotter hands the engine a fake one instead
 (`options.port = <fake EBB>`, see tests/fake_ebb.py), which never goes near a serial port.
 """
+import tempfile
+
 import pytest
 import serial
 from plotink import ebb_serial
@@ -34,3 +36,10 @@ def no_real_plotter(monkeypatch):
     monkeypatch.setattr(ebb_serial, "comports", lambda *args, **kwargs: [])  # what Windows would list
     monkeypatch.setattr(serial, "Serial", refuses)  # the last line of defence: opening a port itself
     return attempts
+
+
+@pytest.fixture(autouse=True)
+def private_temp_folder(monkeypatch, tmp_path_factory):
+    """rosetta-plot keeps its log in the temp folder when a command names no plot; a test must not
+    write into the real one (tempfile.gettempdir() answers with this folder instead)."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path_factory.mktemp("temp")))

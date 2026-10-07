@@ -2,9 +2,13 @@ import _thread
 import argparse
 import hashlib
 import json
+import logging
+import re
 import signal
+import tempfile
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -459,8 +463,8 @@ def test_a_normal_two_layer_plot_draws_both_layers_and_leaves_nothing_behind(tmp
     assert all(ebb.closed for ebb in session.engine_ebbs)
     assert session.plotter.closed
     assert not _resume_file(tmp_path).exists()
-    assert session.prompts[0] == SLIDE + " "
-    assert session.prompts[1] == "Load the black pen (#000000; 1 of 2), then press Enter. "
+    assert session.prompts[0] == "Load the black pen (#000000; 1 of 2) in the holder, then press Enter. "
+    assert session.prompts[1] == SLIDE + " "  # the pen goes in first; the carriage is slid Home last
     assert session.prompts[2] == "Load the red pen (#ff0000; 2 of 2), then press Enter. "
     assert "About " in session.output and "of plotting, plus pen changes." in session.output
     assert "Plotting layer 1 of 2 (black). Press Ctrl+C to pause." in session.output
@@ -562,10 +566,12 @@ def test_quitting_a_paused_plot_frees_the_carriage_and_saves_progress_then_resum
     assert _resume_file(tmp_path).exists()
     assert ("Stopped. The motors are off — slide the pen Home before the next plot.\n"
             f"Progress is saved in {_resume_file(tmp_path)}. "
-            f"To finish later: rosetta-plot plot {plot} --resume") in session.output
-    # The saved progress is tied to this exact plot.svg and model.
+            f"To finish later: rosetta-plot plot {plot} --resume "
+            "--pen-down 30 --pen-type fineliner --penlift 1") in session.output
+    # The saved progress is tied to this exact plot.svg and model, and remembers the pen settings.
     assert json.loads(_resume_json(tmp_path).read_text(encoding="utf-8")) == {
-        "plot": "plot.svg", "sha256": hashlib.sha256(plot.read_bytes()).hexdigest(), "model": 1}
+        "plot": "plot.svg", "sha256": hashlib.sha256(plot.read_bytes()).hexdigest(), "model": 1,
+        "settings": {"pen_down": 30, "pen_type": "fineliner", "penlift": 1}}
 
     saved_text = _resume_file(tmp_path).read_text(encoding="utf-8")
     later = Session(["", "", ""], runner_ebbs=[FakeEBB(), FakeEBB()])
@@ -573,8 +579,8 @@ def test_quitting_a_paused_plot_frees_the_carriage_and_saves_progress_then_resum
     assert later.run(["plot", plot, "--resume"]) == 0, later.output
     assert later.answers == []
     assert released == [True]
-    assert later.prompts[0] == SLIDE + " "
-    assert "Load the black pen (#000000; 1 of 2)" in later.prompts[1]  # the paused layer first...
+    assert "Load the black pen (#000000; 1 of 2)" in later.prompts[0]  # the paused layer's pen first...
+    assert later.prompts[1] == SLIDE + " "  # ...then the carriage is slid Home...
     assert "Load the red pen (#ff0000; 2 of 2)" in later.prompts[2]  # ...then the rest
     assert later.runs == 2
     assert all(later.drew(ebb) for ebb in later.engine_ebbs)
@@ -1092,8 +1098,9 @@ def test_a_finished_layer_deletes_the_old_pause_so_it_is_not_offered_for_resumin
     assert "Layer 1 done." in session.output
     assert saved_when_asked_for_the_red_pen == [True]
     assert _nothing_saved(tmp_path)
-    assert ("Nothing to resume: the layers so far are finished. "
-            "To plot the remaining colors, prepare a job with only those colors.") in session.output
+    assert ("Nothing to resume: the layers so far are finished. To plot the remaining colors: "
+            f"rosetta-plot plot {plot} --start-layer 2 --pen-down 30 --pen-type fineliner --penlift 1"
+            ) in session.output
     assert "--resume" not in session.output and "Progress is saved" not in session.output
     assert "Stopped. The motors are off" in session.output
 
@@ -1120,7 +1127,7 @@ def test_stopping_with_nothing_drawn_does_not_claim_finished_layers(tmp_path):
 
 def test_stopping_a_resume_before_it_starts_leaves_the_saved_progress_and_says_so(tmp_path):
     plot = _stop_a_paused_plot(tmp_path)
-    later = Session(["", KeyboardInterrupt()])  # Ctrl+C at "Load the black pen"
+    later = Session([KeyboardInterrupt()])  # Ctrl+C at "Load the black pen"
     assert later.run(["plot", plot, "--resume"]) == 130, later.output
     assert later.runs == 0
     assert _resume_file(tmp_path).exists() and _resume_json(tmp_path).exists()
@@ -1212,3 +1219,406 @@ def test_ctrl_c_at_the_menu_after_a_held_ctrl_c_is_still_just_a_stop(tmp_path):
     session.press_ctrl_c_at(first, MID_STROKE, presses=4)
     assert session.run(["plot", plot]) == 130, session.output
     assert _resume_file(tmp_path).exists() and "--resume" in session.output
+
+
+# At the plotter: the sequence of prompts, the motors, and what carries over between sessions.
+
+DEFAULT_PEN_FLAGS = "--pen-down 30 --pen-type fineliner --penlift 1"
+TUNED_PEN_FLAGS = ["--pen-down", "35", "--pen-type", "marker", "--penlift", "2"]
+
+
+def _motors_are_off(session) -> bool:
+    commands = [command for command in session.plotter.log if command.startswith("EM,")]
+    return bool(commands) and commands[-1] == "EM,0,0"
+
+
+def _note_state(session, seen, label):
+    """When the prompt containing `label` is shown, note whether the motors are off and how many engine runs came before."""
+    session.when_prompted(label, lambda s: seen.append((label, _motors_are_off(s), len(s.calls))))
+
+
+def test_info_lets_go_of_the_motors_before_it_disconnects():
+    ebb = new_plotter_ebb(nickname="PSU Lab m5p1")
+    close = ebb.close
+    ebb.close = lambda: (ebb.log.append("<port closed>"), close())  # note when the port closes
+    session = Session([], plotter=ebb)
+    assert session.run(["info"]) == 0, session.output
+    assert "EM,0,0" in ebb.log and ebb.log.index("EM,0,0") < ebb.log.index("<port closed>")
+    assert "Model: AxiDraw SE/A1 (label: PSU Lab)" in session.output
+    assert "The motors are off, so the carriage slides by hand." in session.output
+
+
+@pytest.mark.parametrize("nickname", ["Studio Plotter", "AxiDraw 7"])
+def test_info_shows_a_plotter_name_that_is_not_ours(nickname):
+    session = Session([], plotter=new_plotter_ebb(nickname=nickname))
+    assert session.run(["info"]) == 0, session.output
+    assert (f'Model: unknown (plotter is named "{nickname}"). Run: rosetta-plot identify --model N'
+            in session.output)
+
+
+def test_info_on_a_plotter_with_no_name_only_says_the_model_is_unknown():
+    session = Session([], plotter=new_plotter_ebb(nickname=""))
+    assert session.run(["info"]) == 0, session.output
+    assert "Model: unknown. Run: rosetta-plot identify --model N" in session.output
+    assert "is named" not in session.output
+
+
+def test_a_fresh_plot_asks_for_the_first_pen_while_the_motors_are_off_then_the_slide_then_plots(tmp_path):
+    plot = make_plot(tmp_path)
+    session = Session(["", "", ""])
+    seen = []
+    _note_state(session, seen, "Load the black pen")
+    _note_state(session, seen, "Slide the pen")
+    assert session.run(["plot", plot]) == 0, session.output
+    assert session.answers == []
+    assert seen == [("Load the black pen", True, 0), ("Slide the pen", True, 0)]  # nothing plotted yet
+    assert session.prompts == [
+        "Load the black pen (#000000; 1 of 2) in the holder, then press Enter. ",
+        SLIDE + " ",
+        "Load the red pen (#ff0000; 2 of 2), then press Enter. ",  # layer 1 followed the slide at once
+    ]
+    assert [(call.kind, call.layer) for call in session.calls] == [("run", 1), ("run", 2)]
+
+
+def test_resume_asks_for_the_paused_layers_pen_while_the_motors_are_off_then_the_slide(tmp_path):
+    plot = _stop_a_paused_plot(tmp_path)
+    later = Session(["", "", ""], runner_ebbs=[FakeEBB(), FakeEBB()])
+    seen = []
+    _note_state(later, seen, "Load the black pen")
+    _note_state(later, seen, "Slide the pen")
+    assert later.run(["plot", plot, "--resume"]) == 0, later.output
+    assert seen == [("Load the black pen", True, 0), ("Slide the pen", True, 0)]
+    assert later.prompts == [
+        "Load the black pen (#000000; 1 of 2) in the holder, then press Enter. ",
+        SLIDE + " ",
+        "Load the red pen (#ff0000; 2 of 2), then press Enter. ",
+    ]
+    assert [(call.kind, call.layer) for call in later.calls] == [("resume", 1), ("run", 2)]
+
+
+# Resume keeps the pen settings of the plot that was stopped.
+
+def _pause_and_quit(folder, *flags):
+    """Plot a two-layer plot with `flags`, pause layer 1 with Ctrl+C and quit: the progress is saved."""
+    plot = make_plot(folder)
+    first = FakeEBB()
+    session = Session(["", "", "q"], runner_ebbs=[first])
+    session.press_ctrl_c_at(first, MID_STROKE)
+    assert session.run(["plot", plot, *flags]) == 1, session.output
+    return plot, session
+
+
+def _resumed(plot, *flags):
+    later = Session(["", "", ""], runner_ebbs=[FakeEBB(), FakeEBB()])
+    assert later.run(["plot", plot, "--resume", *flags]) == 0, later.output
+    return later
+
+
+def _pen_settings(call):
+    return (call.settings.pen_down, call.settings.pen_type, call.settings.penlift)
+
+
+def test_a_stopped_plot_keeps_its_pen_settings_and_the_hint_says_them(tmp_path):
+    plot, session = _pause_and_quit(tmp_path, *TUNED_PEN_FLAGS)
+    saved = json.loads(_resume_json(tmp_path).read_text(encoding="utf-8"))
+    assert saved["settings"] == {"pen_down": 35, "pen_type": "marker", "penlift": 2}
+    assert (f"To finish later: rosetta-plot plot {plot} --resume --pen-down 35 --pen-type marker --penlift 2"
+            in session.output)
+
+
+def test_resume_uses_the_pen_settings_the_plot_was_stopped_with(tmp_path):
+    plot, _ = _pause_and_quit(tmp_path, *TUNED_PEN_FLAGS)
+    later = _resumed(plot)
+    assert [_pen_settings(call) for call in later.calls] == [(35, "marker", 2)] * 2  # the rest of layer 1, layer 2
+    assert "different pen settings" not in later.output
+    # the plotter stores pen lift 1; the note says where the 2 came from
+    assert "this plotter has pen lift 1 stored, but the paused plot used 2. Using 2." in later.output
+
+
+def test_explicit_flags_win_on_resume_and_a_note_says_so(tmp_path):
+    plot, _ = _pause_and_quit(tmp_path, *TUNED_PEN_FLAGS)
+    later = _resumed(plot, "--pen-down", "40", "--pen-type", "brush")
+    assert [_pen_settings(call) for call in later.calls] == [(40, "brush", 2)] * 2  # pen lift still the stored 2
+    notes = [line for line in later.output.splitlines() if "different pen settings" in line]
+    assert notes == ["Note: the paused plot used different pen settings; using what you asked for: "
+                     "--pen-down 40 (was 35), --pen-type brush (was marker)."]
+
+
+def test_a_flag_that_matches_the_stored_setting_needs_no_note(tmp_path):
+    plot, _ = _pause_and_quit(tmp_path, *TUNED_PEN_FLAGS)
+    later = _resumed(plot, "--pen-down", "35", "--penlift", "2")
+    assert _pen_settings(later.calls[0]) == (35, "marker", 2)
+    assert "different pen settings" not in later.output
+
+
+def test_progress_saved_before_settings_were_kept_resumes_with_the_defaults(tmp_path):
+    plot, _ = _pause_and_quit(tmp_path)
+    saved = json.loads(_resume_json(tmp_path).read_text(encoding="utf-8"))
+    del saved["settings"]
+    _resume_json(tmp_path).write_text(json.dumps(saved), encoding="utf-8")
+    assert _pen_settings(_resumed(plot).calls[0]) == (30, "fineliner", 1)
+
+
+def test_garbled_stored_pen_settings_are_ignored_not_trusted(tmp_path):
+    plot, _ = _pause_and_quit(tmp_path)
+    saved = json.loads(_resume_json(tmp_path).read_text(encoding="utf-8"))
+    saved["settings"] = {"pen_down": 999, "pen_type": ["x"], "penlift": "two"}
+    _resume_json(tmp_path).write_text(json.dumps(saved), encoding="utf-8")
+    assert _pen_settings(_resumed(plot).calls[0]) == (30, "fineliner", 1)
+
+
+def test_the_hints_put_quotes_around_a_plot_path_with_spaces(tmp_path):
+    folder = tmp_path / "my plots"
+    folder.mkdir()
+    plot, session = _pause_and_quit(folder)
+    assert f'To finish later: rosetta-plot plot "{plot}" --resume {DEFAULT_PEN_FLAGS}' in session.output
+    between = Session(["", "", KeyboardInterrupt()])  # a second plot: stopped between layers
+    between.run(["plot", plot])
+    assert f'To plot the remaining colors: rosetta-plot plot "{plot}" --start-layer 2' in between.output
+
+
+# plot --start-layer N
+
+def test_start_layer_plots_only_from_that_layer_on(tmp_path):
+    plot = make_plot(tmp_path, layers=3)
+    session = Session(["", "", ""])
+    assert session.run(["plot", plot, "--start-layer", "2"]) == 0, session.output
+    assert [(call.kind, call.layer) for call in session.calls] == [("run", 2), ("run", 3)]
+    assert session.prompts[0] == "Load the red pen (#ff0000; 2 of 3) in the holder, then press Enter. "
+    assert session.prompts[1] == SLIDE + " "
+    assert "Done!" in session.output
+
+
+def test_stopping_between_layers_of_a_start_layer_plot_says_how_to_do_the_rest(tmp_path):
+    plot = make_plot(tmp_path, layers=3)
+    session = Session(["", "", KeyboardInterrupt()])  # layer 2 is drawn, then Ctrl+C at "Load the blue pen"
+    assert session.run(["plot", plot, "--start-layer", "2", "--pen-down", "33"]) == 130, session.output
+    assert ("Nothing to resume: the layers so far are finished. To plot the remaining colors: "
+            f"rosetta-plot plot {plot} --start-layer 3 --pen-down 33 --pen-type fineliner --penlift 1"
+            ) in session.output
+
+
+@pytest.mark.parametrize("start, words", [
+    (0, "--start-layer 0: this plot has 2 layers; choose 1 to 2."),
+    (3, "--start-layer 3: this plot has 2 layers; choose 1 to 2."),
+    (-1, "--start-layer -1: this plot has 2 layers; choose 1 to 2."),
+])
+def test_start_layer_outside_the_plots_layers_is_refused_before_anything_moves(tmp_path, start, words):
+    plot = make_plot(tmp_path)
+    session = Session([])
+    assert session.run(["plot", plot, "--start-layer", str(start)]) == 2
+    assert words in session.output
+    assert session.prompts == [] and session.runs == 0 and session.plotter.sm == 0
+
+
+def test_start_layer_of_a_one_layer_plot_says_layer_not_layers(tmp_path):
+    plot = make_plot(tmp_path, layers=1)
+    session = Session([])
+    assert session.run(["plot", plot, "--start-layer", "2"]) == 2
+    assert "--start-layer 2: this plot has 1 layer; choose 1." in session.output
+
+
+def test_start_layer_and_resume_cannot_be_combined(tmp_path):
+    plot = _stop_a_paused_plot(tmp_path)
+    session = Session([])
+    assert session.run(["plot", plot, "--resume", "--start-layer", "2"]) == 2
+    assert "--start-layer and --resume can't be used together" in session.output
+    assert session.prompts == [] and session.runs == 0 and _resume_file(tmp_path).exists()
+
+
+# The escape hatch when the plotter can't store its model.
+
+@pytest.mark.parametrize("result, words", [
+    (IdentityWrite.FIRMWARE_TOO_OLD, "too old"),
+    (IdentityWrite.FIRMWARE_UNKNOWN, "Could not read"),
+])
+def test_identify_that_cannot_store_the_model_names_the_way_around_it(stub_plotter, capsys, result, words):
+    stub_plotter.identity_result = result
+    assert main(["identify", "--model", "5"]) == 1
+    said = " ".join(capsys.readouterr().out.split())
+    assert words in said
+    assert "add --skip-model-check to plot, trace or pen (make sure the job's model matches your plotter)" in said
+
+
+def test_identify_with_old_firmware_on_the_real_engine_says_the_same():
+    session = Session([], plotter=new_plotter_ebb(nickname="", version="2.4.0"))
+    assert session.run(["identify", "--model", "5"]) == 1
+    assert "too old" in session.output and "--skip-model-check" in session.output
+
+
+@pytest.mark.parametrize("command", ["plot", "trace"])
+def test_a_plotter_with_no_stored_model_is_refused_with_the_way_around_it(tmp_path, command):
+    session = Session([], plotter=new_plotter_ebb(nickname=""))
+    assert session.run([command, make_plot(tmp_path)]) == 1
+    assert "This plotter's model isn't stored yet. Run: rosetta-plot identify --model N" in session.output
+    assert ("add --skip-model-check to plot, trace or pen (make sure the job's model matches your plotter)"
+            in session.output)
+
+
+def test_a_plotter_of_another_model_is_not_told_to_skip_the_check(tmp_path):
+    session = Session([], plotter=new_plotter_ebb(nickname="Lab m5p1"))
+    assert session.run(["plot", make_plot(tmp_path)]) == 1
+    assert "--skip-model-check" not in session.output
+
+
+# pen --mark: the pen is lowered where the test line starts, not at Home.
+
+def test_pen_with_a_mark_checks_the_height_at_the_start_of_the_test_line_not_at_home():
+    session = Session(["", ""])
+    ebb = session.plotter
+    steps_after_each_move = []
+    ebb.on_sm = lambda count: steps_after_each_move.append((ebb.sm_steps1, ebb.sm_steps2))
+    at_the_check = []
+    session.when_prompted("Check it just touches", lambda s: at_the_check.append(
+        (ebb.sm, (ebb.sm_steps1, ebb.sm_steps2), s.pen_commands(ebb)[-1])))
+    assert session.run(["pen", "--model", "1", "--pen-down", "35", "--mark", "10", "10"]) == 0, session.output
+    moves, steps, last_pen_command = at_the_check[0]
+    assert last_pen_command == "down"
+    assert moves > 0  # the carriage had already walked away from Home, pen up
+    first_lowering = next(moves_so_far for command, moves_so_far in ebb.pen_cmds if command == "down")
+    assert first_lowering == moves  # the first time the pen went down was for the check, at the line's start
+    # The line starts 5 mm in from the mark: (15, 15) mm from Home, at 80 steps a millimetre.
+    assert steps_after_each_move[moves - 1] == steps
+    assert (abs(steps[0]), abs(steps[1])) == pytest.approx((2400, 0), abs=3)
+    assert "Drew a 10 mm test line near (10, 10) and returned Home." in session.output
+    assert abs(ebb.sm_steps1) <= 2 and abs(ebb.sm_steps2) <= 2  # and ends Home
+
+
+def test_a_pen_test_stopped_on_the_way_to_the_line_never_lowers_the_pen():
+    session = Session(["", ""])
+    session.press_ctrl_c_at(session.plotter, 3, presses=3)
+    assert session.run(["pen", "--model", "1", "--mark", "10", "10"]) == 1, session.output
+    assert "The plotter stopped before the pen test finished. Slide the pen Home before plotting." in session.output
+    assert not session.drew(session.plotter)
+    assert session.times_asked("Check it just touches") == 0
+    assert session.plotter.pen_cmds[-1][0] == "up" and session.plotter.closed
+
+
+def test_a_pen_test_stopped_while_drawing_the_line_lifts_the_pen_and_frees_the_carriage():
+    session = Session(["", ""])
+    session.press_ctrl_c_at(session.plotter, 11, presses=2)  # the walk to the line takes 9 moves, the line 5
+    assert session.run(["pen", "--model", "1", "--mark", "10", "10"]) == 1, session.output
+    ebb = session.plotter
+    assert session.times_asked("Check it just touches") == 1 and session.drew(ebb)
+    assert "The plotter stopped before the pen test finished. Slide the pen Home before plotting." in session.output
+    assert "The motors are off, so the carriage slides freely." in session.output
+    assert ebb.pen_cmds[-1][0] == "up" and ebb.closed
+
+
+# prepare --model
+
+def test_prepare_model_replaces_the_models_in_the_job_file(tmp_path, capsys):
+    out = tmp_path / "plot"
+    assert main(["prepare", str(_job(tmp_path)), "--model", "5", "-o", str(out)]) == 0
+    assert json.loads(out.with_suffix(".json").read_text(encoding="utf-8"))["model"] == 5
+    assert "Using model 5 (from --model), not the job file's model 1." in capsys.readouterr().out
+
+
+def test_prepare_model_makes_one_job_file_work_for_any_machine(tmp_path):
+    job = json.loads(_job(tmp_path).read_text(encoding="utf-8"))
+    del job["model"]
+    path = _write_job(tmp_path, job)
+    assert main(["prepare", str(path), "--model", "3", "-o", str(tmp_path / "plot")]) == 0
+    assert json.loads((tmp_path / "plot.json").read_text(encoding="utf-8"))["model"] == 3
+
+
+def test_prepare_without_model_still_needs_one_in_the_job_file(tmp_path, capsys):
+    job = json.loads(_job(tmp_path).read_text(encoding="utf-8"))
+    del job["model"]
+    assert main(["prepare", str(_write_job(tmp_path, job)), "-o", str(tmp_path / "plot")]) == 2
+    assert '"model"' in capsys.readouterr().out
+
+
+def test_prepare_model_must_be_a_model_number(tmp_path):
+    with pytest.raises(SystemExit):
+        main(["prepare", str(_job(tmp_path)), "--model", "9", "-o", str(tmp_path / "plot")])
+
+
+# The log: what rosetta and the EMS engine reported, kept next to the plot (else in the temp folder).
+
+LOG_NAME = "rosetta-plot.log"
+
+
+def _log_text(folder) -> str:
+    return (folder / LOG_NAME).read_text(encoding="utf-8")
+
+
+def _rosetta_logging():
+    logger = logging.getLogger("rosetta")
+    return list(logger.handlers), logger.level, logger.propagate
+
+
+def test_a_plot_session_keeps_a_log_next_to_the_plot_with_the_engines_messages(tmp_path):
+    plot = make_plot(tmp_path)
+    session = Session(["", "", "q"], runner_ebbs=[None])  # no plotter: EMS says so, and rosetta-plot gives up
+    assert session.run(["plot", plot]) == 1, session.output
+    text = _log_text(tmp_path)
+    assert "rosetta.ems" in text and "Failed to connect to AxiDraw" in text  # what EMS reported
+    assert "plot" in text.splitlines()[0]  # the first line says what was run
+    assert re.match(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d", text.splitlines()[0])  # every line has a time
+    assert f"Details were saved to {tmp_path / LOG_NAME}." in session.output
+
+
+def test_the_log_is_added_to_not_replaced(tmp_path):
+    plot = make_plot(tmp_path)
+    for _ in range(2):
+        Session(["", "", "q"], runner_ebbs=[None]).run(["plot", plot])
+    assert _log_text(tmp_path).count("Failed to connect to AxiDraw") == 2
+
+
+def test_a_run_that_went_well_does_not_point_at_the_log(tmp_path):
+    session = Session(["", "", ""])
+    assert session.run(["plot", make_plot(tmp_path)]) == 0
+    assert "Details were saved" not in session.output
+
+
+def test_stopping_with_ctrl_c_at_a_prompt_does_not_point_at_the_log(tmp_path):
+    session = Session([KeyboardInterrupt()])
+    assert session.run(["plot", make_plot(tmp_path)]) == 130
+    assert "Details were saved" not in session.output
+
+
+def test_a_bad_job_file_points_at_the_log_next_to_the_job(tmp_path, capsys):
+    path = _write_job(tmp_path, {"material": _PAPER, "pieces": []})
+    assert main(["prepare", str(path), "-o", str(tmp_path / "plot")]) == 2
+    out = capsys.readouterr().out
+    assert '"model"' in out and f"Details were saved to {tmp_path / LOG_NAME}." in out
+    assert '"model"' in _log_text(tmp_path)
+
+
+def test_commands_that_name_no_plot_keep_their_log_in_the_temp_folder(capsys):
+    session = Session([], no_plotter=True)
+    assert session.run(["info"]) == 1
+    temp_log = Path(tempfile.gettempdir()) / LOG_NAME
+    assert f"Details were saved to {temp_log}." in session.output
+    assert "info" in temp_log.read_text(encoding="utf-8")
+
+
+def test_a_plot_in_a_folder_that_does_not_exist_logs_to_the_temp_folder(tmp_path, capsys):
+    assert main(["estimate", str(tmp_path / "nowhere" / "plot.svg")]) == 2
+    assert f"Details were saved to {Path(tempfile.gettempdir()) / LOG_NAME}." in capsys.readouterr().out
+
+
+def test_an_unexpected_error_is_shown_kindly_and_logged_with_its_traceback(monkeypatch, capsys):
+    def explodes(args):
+        raise RuntimeError("the port exploded")
+
+    monkeypatch.setattr(cli, "cmd_info", explodes)
+    assert main(["info"]) == 1
+    out = capsys.readouterr().out
+    assert "Something unexpected went wrong: RuntimeError: the port exploded" in out
+    assert "Traceback" not in out
+    assert f"Details were saved to {Path(tempfile.gettempdir()) / LOG_NAME}." in out
+    text = (Path(tempfile.gettempdir()) / LOG_NAME).read_text(encoding="utf-8")
+    assert "Traceback (most recent call last)" in text and "RuntimeError: the port exploded" in text
+
+
+def test_logging_is_left_exactly_as_it_was_after_every_kind_of_exit(tmp_path, monkeypatch, capsys):
+    before = _rosetta_logging()
+    session = Session([], no_plotter=True)
+    session.run(["info"])  # an error exit
+    Session(["", "", ""]).run(["plot", make_plot(tmp_path)])  # a clean one
+    monkeypatch.setattr(cli, "cmd_info", lambda args: 1 / 0)
+    main(["info"])  # an unexpected error
+    assert _rosetta_logging() == before
+    (tmp_path / LOG_NAME).unlink()  # and the log file is closed, so it can be deleted (Windows)

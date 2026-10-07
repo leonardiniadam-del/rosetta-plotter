@@ -20,6 +20,15 @@ EMS_UNITS_MM = 2
 # Hand-placed Home can be a few mm off; never drive the last millimetre toward the far stops.
 REACH_SAFETY_MM = 1.0
 
+# A test mark is a line this long, starting this far in from the corner it is given.
+MARK_LENGTH_MM = 10.0
+MARK_INSET_MM = 5.0
+
+
+def mark_start(corner_x: float, corner_y: float) -> tuple[float, float]:
+    """Where the test mark for this paper corner starts (mm from Home)."""
+    return (corner_x + MARK_INSET_MM, corner_y + MARK_INSET_MM)
+
 
 class PlotterStopped(Exception):
     """The plotter stopped mid-move (pause button or lost USB); its position is no longer known."""
@@ -182,9 +191,10 @@ class Plotter:
 
     def test_mark(self, corner_x: float, corner_y: float) -> None:
         """A 10 mm line just inside the paper corner nearest Home, then back Home."""
+        start_x, start_y = mark_start(corner_x, corner_y)
         self.pen_up()
-        self.goto(corner_x + 5, corner_y + 5)
-        self._checked_move(lambda ad: ad.lineto(corner_x + 15, corner_y + 5))
+        self.goto(start_x, start_y)
+        self._checked_move(lambda ad: ad.lineto(start_x + MARK_LENGTH_MM, start_y))
         self._pen_is_down = True
         self.pen_up()
         self.goto(0.0, 0.0)

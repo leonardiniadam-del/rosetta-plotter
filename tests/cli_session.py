@@ -10,8 +10,10 @@ No test here can touch a real plotter: tests/conftest.py switches EMS's port sea
 import _thread
 import builtins
 import contextlib
+import dataclasses
 import io
 import json
+import logging
 import threading
 from collections import namedtuple
 from pathlib import Path
@@ -24,6 +26,9 @@ from rosetta import cli
 from rosetta.engine.plotter import Plotter
 from rosetta.engine.runner import PlotRunner
 from tests.fake_ebb import FakeEBB, IFakeEBB, layered_svg, skip_engine_waits
+
+# What the real engine factory (rosetta.engine.options.make_axidraw) does with EMS's messages.
+_EMS_MESSAGES = logging.getLogger("rosetta.ems").info
 
 LAYER_NAMES = ["black", "red", "blue", "green"]
 LAYER_COLORS = ["#000000", "#ff0000", "#0000ff", "#00aa00"]
@@ -53,8 +58,13 @@ def new_plotter_ebb(nickname="Lab m1p1", **kw) -> IFakeEBB:
     return IFakeEBB(nickname=nickname, move_sleep=0, **kw)
 
 
-class EngineCall(namedtuple("EngineCall", "kind layer svg")):
-    """One request to the engine: kind is "run", "resume" or "home"; svg is what it was given."""
+class ScriptRanOut(BaseException):
+    """The CLI asked for more typing than the test scripted. (A BaseException on purpose: rosetta-plot
+    turns unexpected Exceptions into a friendly message, which would hide this from the test.)"""
+
+
+class EngineCall(namedtuple("EngineCall", "kind layer svg settings", defaults=(None,))):
+    """One request to the engine: kind is "run", "resume" or "home"; svg and settings are what it was given."""
 
     @property
     def origin(self) -> tuple[float, float]:
@@ -131,7 +141,7 @@ class Session:
                     self._hooks.remove(hook)
                 hook[1](self)
         if not self.answers:
-            raise AssertionError(f"the script ran out of answers at the prompt: {prompt!r}")
+            raise ScriptRanOut(f"the script ran out of answers at the prompt: {prompt!r}")
         answer = self.answers.pop(0)
         if isinstance(answer, BaseException) or (isinstance(answer, type) and issubclass(answer, BaseException)):
             print(prompt)
@@ -152,7 +162,7 @@ class Session:
                 self.options.port = session.plotter  # EMS then uses this "port", not a real one
                 return super().connect()
 
-        plotter = Plotter(factory=lambda: FakeInteractiveAxiDraw(user_message_fun=lambda text: None))
+        plotter = Plotter(factory=lambda: FakeInteractiveAxiDraw(user_message_fun=_EMS_MESSAGES))
         real_request_pause = plotter.request_pause
 
         def request_pause():
@@ -177,7 +187,7 @@ class Session:
             ebb = session.runner_ebbs[index] if index < len(session.runner_ebbs) else FakeEBB()
             session.engine_ebbs.append(ebb)
             session._pause_requested.clear()
-            ad = FakeAxiDraw(user_message_fun=lambda text: None)
+            ad = FakeAxiDraw(user_message_fun=_EMS_MESSAGES)
             ad.rosetta_ebb = ebb
             return ad
 
@@ -195,11 +205,12 @@ class Session:
             session._pause_requested.set()
 
         def run(svg_text, layer, settings, *args, **kwargs):
-            session.calls.append(EngineCall("resume" if kwargs.get("resume") else "run", layer, svg_text))
+            kind = "resume" if kwargs.get("resume") else "run"
+            session.calls.append(EngineCall(kind, layer, svg_text, dataclasses.replace(settings)))
             return real_run(svg_text, layer, settings, *args, **kwargs)
 
         def return_home(resume_svg, settings, *args, **kwargs):
-            session.calls.append(EngineCall("home", None, resume_svg))
+            session.calls.append(EngineCall("home", None, resume_svg, dataclasses.replace(settings)))
             return real_return_home(resume_svg, settings, *args, **kwargs)
 
         runner.pause, runner.run, runner.return_home = pause, run, return_home
