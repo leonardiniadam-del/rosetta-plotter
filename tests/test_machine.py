@@ -1,9 +1,13 @@
 """Machine runs the real EMS interactive engine against fake EBBs (tests/fake_ebb.py)."""
+import threading
+import time
+
 import pytest
 
-from rosetta.app.machine import BUSY, NEEDS_MODEL, NO_POWER, NOT_CONNECTED, MachineState
+from rosetta.app.machine import BUSY, NEEDS_MODEL, NO_POWER, NOT_CONNECTED, Machine, MachineState
 from rosetta.app.settings import SettingsStore
 from rosetta.engine.options import Advanced
+from rosetta.engine.plotter import Plotter
 from rosetta.errors import UserProblem
 from tests.app_helpers import make_machine
 from tests.fake_ebb import IFakeEBB, skip_engine_waits
@@ -94,6 +98,27 @@ def test_a_pulled_cable_is_noticed(tmp_path):
     ebb.dead = True
     bench.ebb = None
     assert machine.scan()["state"] == "no_plotter"
+
+
+class _GoesQuietWhileConnecting(Plotter):
+    def connect(self, settings):
+        raise IndexError("list index out of range")  # serial_utils, when a port stops answering mid-handshake
+
+
+def test_a_plotter_that_goes_quiet_while_connecting_counts_as_none(tmp_path):
+    machine = Machine(SettingsStore(tmp_path / "settings.json"), plotter_factory=_GoesQuietWhileConnecting)
+    assert machine.scan()["state"] == "no_plotter"
+
+
+def test_a_plotter_that_goes_quiet_while_being_identified_is_let_go(tmp_path, monkeypatch):
+    machine, ebb, _bench, _store = _plugged(tmp_path, nickname="m5p1")
+
+    def goes_quiet(_plotter):
+        raise IndexError("list index out of range")
+
+    monkeypatch.setattr(Plotter, "firmware", goes_quiet)
+    assert machine.scan()["state"] == "no_plotter"
+    assert ebb.closed
 
 
 def test_pen_settings_are_kept_without_a_plotter(tmp_path):
@@ -187,6 +212,32 @@ def test_the_plotter_is_handed_over_for_a_plot_and_taken_back(tmp_path):
     assert machine.after_plot(at_home=True)["state"] == "ready"
     machine.release_for_plot()
     assert machine.after_plot(at_home=False)["state"] == "not_homed"
+
+
+def _hold_the_lock_briefly(machine, seconds=0.2) -> threading.Thread:
+    """Another thread holds the Machine's lock for a moment, as scan() does while it looks at the plotter."""
+    holding = threading.Event()
+
+    def hold():
+        with machine._lock:
+            holding.set()
+            time.sleep(seconds)
+
+    thread = threading.Thread(target=hold)
+    thread.start()
+    holding.wait()
+    return thread
+
+
+def test_the_end_of_a_plot_waits_for_a_look_at_the_plotter(tmp_path):
+    machine, _ebb, _bench = _ready(tmp_path)
+    machine.release_for_plot()
+    looking = _hold_the_lock_briefly(machine)
+    assert machine.release_motors() is True
+    looking.join()
+    looking = _hold_the_lock_briefly(machine)
+    assert machine.after_plot(at_home=True)["state"] == "ready"
+    looking.join()
 
 
 def test_a_plot_needs_the_power_adapter(tmp_path):

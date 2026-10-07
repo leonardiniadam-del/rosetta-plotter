@@ -16,6 +16,7 @@ DIAGNOSTIC_LINES = 200
 _FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 _LOGGERS = ("rosetta", "pywebview")  # rosetta.ems (EMS's own messages) is under rosetta
 _OWNED = "_rosetta_app_log"
+_PREVIOUS_LEVEL = "_rosetta_previous_level"  # the rosetta logger's level before setup_logging
 
 
 class _QuietLibraries(logging.Filter):
@@ -36,23 +37,28 @@ def setup_logging(folder: Path) -> Path | None:
         )
     except OSError:
         return None
+    rosetta_logger = logging.getLogger("rosetta")
     setattr(handler, _OWNED, True)
+    setattr(handler, _PREVIOUS_LEVEL, rosetta_logger.level)
     handler.setFormatter(logging.Formatter(_FORMAT))
     handler.addFilter(_QuietLibraries())
-    logging.getLogger("rosetta").setLevel(logging.INFO)
+    rosetta_logger.setLevel(logging.INFO)
     for name in _LOGGERS:
         logging.getLogger(name).addHandler(handler)
     return Path(handler.baseFilename)
 
 
 def stop_logging() -> None:
-    """Remove and close the handler setup_logging added (flushing the file)."""
+    """Remove and close the handler setup_logging added (flushing the file), and put the rosetta
+    logger's level back."""
     closed = set()
     for name in _LOGGERS:
         logger = logging.getLogger(name)
         for handler in list(logger.handlers):
             if getattr(handler, _OWNED, False):
                 logger.removeHandler(handler)
+                if name == "rosetta":
+                    logger.setLevel(getattr(handler, _PREVIOUS_LEVEL, logger.level))
                 if id(handler) not in closed:
                     handler.close()
                     closed.add(id(handler))

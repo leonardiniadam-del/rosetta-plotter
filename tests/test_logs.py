@@ -34,6 +34,19 @@ def test_setting_up_twice_does_not_write_lines_twice(tmp_path):
     assert path.read_text(encoding="utf-8").count("once") == 1
 
 
+def test_stopping_puts_the_rosetta_level_back(tmp_path):
+    rosetta_logger = logging.getLogger("rosetta")
+    before = rosetta_logger.level
+    rosetta_logger.setLevel(logging.WARNING)
+    try:
+        setup_logging(tmp_path / "logs")
+        assert rosetta_logger.level == logging.INFO
+        stop_logging()
+        assert rosetta_logger.level == logging.WARNING
+    finally:
+        rosetta_logger.setLevel(before)
+
+
 def test_the_log_rotates(tmp_path):
     setup_logging(tmp_path / "logs")
     handlers = [h for h in logging.getLogger("rosetta").handlers if hasattr(h, "maxBytes")]

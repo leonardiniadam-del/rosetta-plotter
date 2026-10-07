@@ -395,11 +395,12 @@ class PlotController:
         self._set("reconnect", message, result.details)
 
     def _end_plot(self, message: str, details: str = "") -> None:
-        """Give the plotter back and drop the plot's progress. The prepared plot stays for a new start."""
+        """Give the plotter back and drop the plot's progress. The prepared plot stays for a new start.
+        If the plotter can't be given back, the plot is left as it was, so nothing is lost."""
         at_home = self._at_home
+        self._machine.after_plot(at_home=at_home)
         self._resume_svg = None
         self._index = 0
-        self._machine.after_plot(at_home=at_home)
         if not at_home:
             message = f"{message} {HOME_UNKNOWN}"
         self._set("ready", message, details)

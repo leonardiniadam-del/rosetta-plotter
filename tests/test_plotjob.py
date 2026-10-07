@@ -2,6 +2,7 @@
 import pytest
 
 from rosetta.app.events import RecordingSink
+from rosetta.app.machine import BUSY
 from rosetta.app.plotjob import (
     CLIPPED, FINISH_FIRST, HOME_UNKNOWN, NOT_NOW, NOTHING_TO_PLOT, PREPARE_FIRST, PlotController,
 )
@@ -179,6 +180,25 @@ def test_cancel_while_paused_asks_for_a_new_home(tmp_path):
     rig.controller.cancel()
     assert rig.state() == "ready" and HOME_UNKNOWN in rig.controller.status()["message"]
     assert rig.machine.status()["state"] == "not_homed"
+
+
+def test_a_cancel_the_plotter_refuses_leaves_the_plot_paused(tmp_path, monkeypatch):
+    rig = Rig(tmp_path)
+    rig.controller.prepare()
+    _pause_after(rig, 5)
+    rig.controller.start()
+    rig.wait_until("paused")
+
+    def refuses(at_home):
+        raise UserProblem(BUSY)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(rig.machine, "after_plot", refuses)
+        with pytest.raises(UserProblem, match=BUSY):
+            rig.controller.cancel()
+    assert rig.state() == "paused" and rig.controller._resume_svg is not None
+    rig.controller.resume()
+    rig.wait_until("done")
 
 
 def test_cancel_at_a_pen_change_keeps_home(tmp_path):

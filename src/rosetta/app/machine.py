@@ -2,7 +2,8 @@
 
 Steps 1-4 move the plotter through the EMS interactive context. A plot run takes the USB port with
 release_for_plot() and gives it back with after_plot(). Only one request uses the plotter at a time:
-a second one gets a "still busy" message instead of waiting, except request_stop(), which works any time.
+a second one gets a "still busy" message instead of waiting, except request_stop(), which works any time,
+and a plot's end (after_plot, release_motors), which waits its turn.
 """
 import contextlib
 import logging
@@ -23,6 +24,7 @@ REBOOT_WAIT_S = 3.0  # the board restarts after its name is written
 RECONNECT_TRIES = 10
 RECONNECT_PAUSE_S = 1.0
 SHUTDOWN_WAIT_S = 10.0
+HANDOVER_WAIT_S = 10.0  # a plot's end waits out a scan() instead of being turned away
 
 BUSY = "The plotter is still busy. Wait for it to finish, then try again."
 NOT_CONNECTED = "No plotter is connected. Plug in the USB cable and the power adapter."
@@ -250,7 +252,7 @@ class Machine:
     def after_plot(self, at_home: bool) -> dict:
         """Take the plotter back after a plot. at_home: the pen is known to be Home (the plot finished,
         or it was sent Home); otherwise the motors go off so the pen can be slid Home by hand."""
-        with self._using(MachineState.PLOTTING):
+        with self._using(MachineState.PLOTTING, wait=HANDOVER_WAIT_S):
             plotter = self._new_plotter()
             if not plotter.connect(self._settings()):
                 self._forget()
@@ -270,7 +272,7 @@ class Machine:
     def release_motors(self) -> bool:
         """While a plot is stopped by a lost cable or an error: switch the motors off so the carriage can
         be slid Home by hand. False if the plotter can't be reached."""
-        with self._using(MachineState.PLOTTING):
+        with self._using(MachineState.PLOTTING, wait=HANDOVER_WAIT_S):
             plotter = self._new_plotter()
             try:
                 if not plotter.connect(self._settings()):
@@ -303,10 +305,12 @@ class Machine:
     # Inside.
 
     @contextlib.contextmanager
-    def _using(self, *allowed: MachineState):
+    def _using(self, *allowed: MachineState, wait: float = 0.0):
         """One request at a time, in a state that allows it. A move that stops partway (Stop, the pause
-        button, a pulled cable) leaves the pen's position unknown."""
-        if not self._lock.acquire(blocking=False):
+        button, a pulled cable) leaves the pen's position unknown. A student's request is turned away at
+        once if the plotter is busy; wait > 0 waits that many seconds for it first (a plot's end)."""
+        got_it = self._lock.acquire(timeout=wait) if wait > 0 else self._lock.acquire(blocking=False)
+        if not got_it:
             raise UserProblem(BUSY)
         try:
             if self.state not in allowed:
@@ -352,10 +356,10 @@ class Machine:
     def _connect_and_identify(self) -> None:
         """Open the plotter, learn which it is, and free its carriage. NO_PLOTTER if it isn't there."""
         plotter = self._new_plotter()
-        if not plotter.connect(self._settings()):
-            self._forget()
-            return
         try:
+            if not plotter.connect(self._settings()):
+                self._forget()
+                return
             self.firmware = plotter.firmware()
             self.power_ok = plotter.power_ok()
             self.port = plotter.port_name()
@@ -375,6 +379,12 @@ class Machine:
             plotter.motors_off()  # connecting holds the carriage; the student is about to slide it Home
         except PlotterStopped:
             plotter.disconnect()
+            self._forget()
+            return
+        except Exception:  # e.g. a port that stops answering mid-handshake: as good as no plotter
+            logger.info("Couldn't connect to the plotter", exc_info=True)
+            with contextlib.suppress(Exception):
+                plotter.disconnect()
             self._forget()
             return
         self._plotter = plotter
