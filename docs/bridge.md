@@ -5,7 +5,7 @@ The student page talks to Python through pywebview's `js_api`, the `Api` class i
 ## Calling Python
 
 - Wait for the window's `pywebviewready` event, then call `await window.pywebview.api.<method>(...args)`. Arguments are positional.
-- Each call runs on its own Python thread, so the slow ones don't freeze the window. Show a spinner while awaiting them. The slow ones are `artwork_import`, `plot_prepare`, moves, `plot_trace` and `plotter_identify`.
+- Each call runs on its own Python thread, so the slow ones don't freeze the window. Show a spinner while awaiting them. The slow ones are `job_import`, `plot_prepare`, moves, `plot_trace` and `plotter_identify`.
 - Every reply is `{"ok": true, ...fields}` or `{"ok": false, "message": "...", "details": "..."}`.
   - Show `message` exactly as written. It's plain language for students.
   - Put `details` behind a **Details** link.
@@ -14,7 +14,7 @@ The student page talks to Python through pywebview's `js_api`, the `Api` class i
 - **Stopped moves.** A trace or move stopped partway (Stop, the plotter's own button, a pulled cable) leaves `machine.state` `not_homed`: the student slides the pen Home again.
 - **Units:** all lengths are millimetres in the machine frame.
   - (0, 0) is the Home corner. x runs along the rail, y toward the student.
-  - The page converts to inches only for display.
+  - The page converts to inches or centimetres only for display.
   - Size messages from Python are in mm too (e.g. custom paper "between 0 and 2000 mm", margin "from 0 to 50 mm"). Check what the student types in their own units first, so they rarely see these.
 - **Whole numbers.** `pen_set`'s height and every Advanced value must be whole numbers: round slider and box values before sending.
 - **Button labels.** Messages name buttons by their label, so keep the page's labels exactly: **Continue** (the `continue` and `reconnect` actions), **Resume**, **It's in the corner** (`rehomed`, and the Home step's button).
@@ -25,7 +25,7 @@ The student page talks to Python through pywebview's `js_api`, the `Api` class i
 | Method | Arguments | Reply |
 |---|---|---|
 | `app_start()` | | `version`, `settings` {units, margin_mm, paper, advanced}, `models` [{number, name, travel}], `pen_types` [{key, label, speed}], `papers` [{key, label, short_mm, long_mm}], `advanced_options` {labels, ranges, choices}, `pen_down_max`, `machine`, `material`, `plot` |
-| `set_units(units)` | `"in"` or `"mm"` | |
+| `set_units(units)` | `"in"`, `"mm"` or `"cm"` | |
 | `set_advanced(values)` | {option: value}, only the options that changed (the rest keep their values); `null` means automatic for `pen_up` and `speed_pendown` | `advanced` (all options) |
 | `diagnostics()` | | `text` for Copy diagnostics |
 | `quit_confirmed()` | | pauses a running plot (pen up), lets go of the plotter, then closes the window. Can take several seconds; the reply may never arrive |
@@ -53,18 +53,23 @@ While a plot is under way (`machine.state` is `plotting`), every call here that 
 | `material_mark_corner()` | | `material` with x, y = the pen's position (needs a homed plotter) |
 | `set_margin(margin_mm)` | 0–50 | `margin_mm` |
 
-### Artwork (Step 3)
+### Jobs and placed drawings
 | Method | Arguments | Reply |
 |---|---|---|
 | `artwork_choose()` | | `paths` (empty if cancelled) |
 | `artwork_pages(path)` | | `pages`. Ask which page when it's more than 1 |
-| `artwork_import(path, page)` | page counts from 0 | `piece`, `shrunk` (true: say it was scaled down to fit) |
-| `piece_place(piece_id, x, y, scale, rotation)` | rotation 0, 90, 180 or 270 | `placement` |
+| `job_import(path, page)` | page counts from 0 | `job` (added to the Jobs list, not placed) |
+| `job_list()` | | `jobs`, `pieces` (for a page reload) |
+| `job_place(job_id, x, y)` | top-left corner, from the paper's corner, in mm | `piece` (scale 1, angle 0: never shrunk) |
+| `job_remove(job_id)` | | `removed_pieces` (the copies that were on the paper) |
+| `piece_place(piece_id, x, y, scale, rotation, scale_y)` | any angle in degrees, clockwise; `scale_y` optional (stretch) | `placement` |
 | `piece_duplicate(piece_id)` | | `piece` (offset 10 mm) |
 | `piece_delete(piece_id)` | | |
+| `paper_rotate()` | | `material`, `paper` (the saved choice), `pieces` (all, turned with the paper) |
+| `set_pen_visible(color, visible)` | `#rrggbb` | `hidden` (the hidden colors) |
 | `set_skip_white(skip)` | | `skip_white` |
-| `job_colors()` | | `colors` [{layer, color, name, lines}], `ink_bbox`, `clipped`, `empty` |
-| `new_plot()` | | clears the paper (refused mid-plot) |
+| `job_colors()` | | `colors` [{layer, color, name, lines, visible}] (`layer` is null for hidden pens), `ink_bbox`, `clipped`, `empty` |
+| `new_plot()` | | clears the paper; the Jobs list stays (refused mid-plot) |
 
 ### Plot (Step 5)
 | Method | Reply |
@@ -104,11 +109,9 @@ There's no Stop while plotting. The page's Stop is: `plot_pause()`, wait for the
   - also: `firmware`, `power_ok`, `model`, `model_name`, `penlift`, `label`, `nickname`, `old_firmware`, `pen_down`, `pen_type`
   - `position`: [x, y] only when `ready`, otherwise null
 - **material**: `x`, `y`, `width`, `height`, `reach` [x, y] or null, `fits` (true, false, or null before a plotter is known)
-- **piece**:
-  - `id`, `name`, `path`, `page`, `width_mm`, `height_mm`, `placement` {x, y, scale, rotation}, `issues` [{code, message, count}]
-  - `groups` [{color, name, white, lines}]. `lines` is a list of flat lists [x0, y0, x1, y1, …] in artwork mm, before placement.
-  - `preview`: a `data:image/svg+xml;base64,…` URL to draw under the lines with an SVG `<image>`, or null.
-- **Placement math:** the rotated, scaled artwork box's top-left sits at (x, y) from the paper's corner. Rotation turns clockwise on screen. See `rosetta.geometry.place_point`.
+- **job**: `id`, `name`, `path`, `page`, `width_mm`, `height_mm`, `issues` [{code, message, count}], `groups` [{color, name, white, lines}] (`lines` are flat lists [x0, y0, x1, y1, …] in artwork mm), `preview` (a `data:image/svg+xml;base64,…` URL for an SVG `<image>`, or null).
+- **piece**: `id`, `job_id`, `placement` {x, y, scale, scale_y, rotation}.
+- **Placement math:** the artwork is scaled on its own axes (`scale` across its width, `scale_y` down its height), turned clockwise by `rotation` degrees, and the top-left of its upright box sits at (x, y) from the paper's corner nearest Home. See `rosetta.geometry.place_point`.
 - **plot**: `state`, `actions`, `layer` (0-based), `layers`, `color`, `name`, `message`, `details`
 - **summary**:
   - `layers` [{layer, color, name, seconds, pendown_mm, path}]
@@ -123,7 +126,7 @@ Python calls `window.rosettaEvent(name, data)`:
 |---|---|
 | `plot_state` | the **plot** shape, on every change |
 | `plot_progress` | `layer`, `x`, `y`, `pendown_mm`, `fraction`, `seconds_left`. About every 100 ms; only the newest is sent if the page falls behind |
-| `files_dropped` | `paths`: call `artwork_pages` and `artwork_import` for each |
+| `files_dropped` | `paths`: call `artwork_pages` and `job_import` for each |
 | `close_requested` | {}: the window was closed mid-plot. Ask "Stop the plot and close?", then call `quit_confirmed()` (show a spinner: it pauses the plot first) |
 
 ## Plot states

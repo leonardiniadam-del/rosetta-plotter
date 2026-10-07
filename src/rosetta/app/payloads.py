@@ -13,12 +13,16 @@ def _rounded(value: float) -> float:
 
 
 def placement_payload(placement: Placement) -> dict:
-    return {"x": placement.x, "y": placement.y, "scale": placement.scale, "rotation": placement.rotation}
+    scale_y = placement.scale if placement.scale_y is None else placement.scale_y
+    return {
+        "x": placement.x, "y": placement.y, "scale": placement.scale,
+        "scale_y": scale_y, "rotation": placement.rotation,
+    }
 
 
-def piece_payload(piece) -> dict:
-    """A piece, with its lines in artwork mm (the page applies the placement itself while dragging)."""
-    art = piece.artwork
+def job_payload(job) -> dict:
+    """A job in the Jobs list, with its lines in artwork mm (the page places them itself)."""
+    art = job.artwork
     groups: dict[str, list] = {}
     for shape in art.shapes:
         lines = groups.setdefault(shape.color, [])
@@ -29,13 +33,12 @@ def piece_payload(piece) -> dict:
         encoded = base64.b64encode(art.preview_svg.encode("utf-8")).decode("ascii")
         preview = f"data:image/svg+xml;base64,{encoded}"
     return {
-        "id": piece.id,
+        "id": job.id,
         "name": art.name,
-        "path": piece.path,
-        "page": piece.page,
+        "path": job.path,
+        "page": job.page,
         "width_mm": art.width_mm,
         "height_mm": art.height_mm,
-        "placement": placement_payload(piece.placement),
         "issues": [
             {"code": issue.code, "message": issue.message, "count": issue.count} for issue in art.issues
         ],
@@ -45,6 +48,11 @@ def piece_payload(piece) -> dict:
         ],
         "preview": preview,
     }
+
+
+def piece_payload(piece) -> dict:
+    """A placed copy of a job: which job, and where."""
+    return {"id": piece.id, "job_id": piece.job_id, "placement": placement_payload(piece.placement)}
 
 
 def material_payload(material: Material, model: MachineModel | None) -> dict:
@@ -63,13 +71,19 @@ def material_payload(material: Material, model: MachineModel | None) -> dict:
     }
 
 
-def job_payload(job: Job) -> dict:
-    """The pens a job needs, in plot order (the Pens panel)."""
+def colors_payload(job: Job, hidden) -> dict:
+    """Every pen color the placed drawings use, in plot order; only visible pens get a layer number."""
+    colors, layer = [], 0
+    for group in job.groups:
+        visible = group.color not in hidden
+        if visible:
+            layer += 1
+        colors.append({
+            "layer": layer if visible else None, "color": group.color, "name": group.name,
+            "lines": len(group.polylines), "visible": visible,
+        })
     return {
-        "colors": [
-            {"layer": number, "color": group.color, "name": group.name, "lines": len(group.polylines)}
-            for number, group in enumerate(job.groups, start=1)
-        ],
+        "colors": colors,
         "ink_bbox": list(job.ink_bbox) if job.ink_bbox else None,
         "clipped": job.clipped,
         "empty": not job.groups,

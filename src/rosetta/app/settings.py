@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 APP_FOLDER = "RosettaPlotter"
 SETTINGS_VERSION = 1
-UNITS = ("in", "mm")
+UNITS = ("in", "mm", "cm")
 MAX_MARGIN_MM = 50.0
 
 

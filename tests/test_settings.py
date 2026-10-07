@@ -71,6 +71,10 @@ def test_one_bad_value_falls_back_to_its_default(tmp_path):
     assert (settings.units, settings.margin_mm) == ("in", 12.0)
 
 
+def test_centimetres_load(tmp_path):
+    assert _store_with(tmp_path, {"units": "cm"}).settings.units == "cm"
+
+
 def test_bad_advanced_options_are_dropped_one_by_one(tmp_path):
     settings = _store_with(tmp_path, {"advanced": {"accel": 500, "speed_penup": 50, "warp": 1}}).settings
     assert settings.advanced == Advanced(speed_penup=50)

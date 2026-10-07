@@ -285,14 +285,36 @@ class Api:
         return {"pages": pages_in(path)}
 
     @_bridge
-    def artwork_import(self, path, page=0):
-        piece, shrunk = self._session.add(path, int(page))
-        self._plot.invalidate()
-        return {"piece": payloads.piece_payload(piece), "shrunk": shrunk}
+    def job_import(self, path, page=0):
+        """Add a file to the Jobs list (slow for big files). It isn't placed yet."""
+        job = self._session.load_job(path, int(page))
+        return {"job": payloads.job_payload(job)}
 
     @_bridge
-    def piece_place(self, piece_id, x, y, scale, rotation):
-        piece = self._session.place(piece_id, x, y, scale, rotation)
+    def job_list(self):
+        """Everything in the Jobs list and on the paper (for a page reload)."""
+        return {
+            "jobs": [payloads.job_payload(job) for job in self._session.jobs],
+            "pieces": [payloads.piece_payload(piece) for piece in self._session.pieces],
+        }
+
+    @_bridge
+    def job_place(self, job_id, x, y):
+        """Put a copy of a job on the paper at full size, its top-left corner at (x, y) from the paper's corner."""
+        piece = self._session.place_job(job_id, _finite(x), _finite(y))
+        self._plot.invalidate()
+        return {"piece": payloads.piece_payload(piece)}
+
+    @_bridge
+    def job_remove(self, job_id):
+        """Take a file off the Jobs list together with its copies on the paper."""
+        removed = self._session.remove_job(job_id)
+        self._plot.invalidate()
+        return {"removed_pieces": removed}
+
+    @_bridge
+    def piece_place(self, piece_id, x, y, scale, rotation, scale_y=None):
+        piece = self._session.place(piece_id, x, y, scale, rotation, scale_y)
         self._plot.invalidate()
         return {"placement": payloads.placement_payload(piece.placement)}
 
@@ -301,6 +323,37 @@ class Api:
         piece = self._session.duplicate(piece_id)
         self._plot.invalidate()
         return {"piece": payloads.piece_payload(piece)}
+
+    @_bridge
+    def paper_rotate(self):
+        """Turn the paper and everything on it 90° clockwise. Returns the paper, its choice, and every piece."""
+        if self._plot.busy():
+            raise UserProblem(FINISH_FIRST)
+        self._session.rotate_paper()
+        material = self._session.material
+        with self._store.change() as settings:
+            paper = settings.paper
+            if paper.size == CUSTOM:
+                settings.paper = PaperChoice(CUSTOM, paper.orientation, material.width, material.height)
+            else:
+                flipped = "portrait" if paper.orientation == "landscape" else "landscape"
+                settings.paper = PaperChoice(paper.size, flipped)
+            choice = dataclasses.asdict(settings.paper)
+        self._plot.invalidate()
+        return {
+            "material": self._material(),
+            "paper": choice,
+            "pieces": [payloads.piece_payload(piece) for piece in self._session.pieces],
+        }
+
+    @_bridge
+    def set_pen_visible(self, color, visible):
+        """The Pens panel's eye: a hidden pen color is left out of the plot, its times and its trace."""
+        if not isinstance(color, str):
+            raise ValueError(f"Expected a color like '#ff0000', got {color!r}")
+        self._session.set_color_visible(color, bool(visible))
+        self._plot.invalidate()
+        return {"hidden": sorted(self._session.hidden_colors)}
 
     @_bridge
     def piece_delete(self, piece_id):
@@ -315,10 +368,11 @@ class Api:
 
     @_bridge
     def job_colors(self):
-        """The pens the drawing needs, in plot order (the Pens panel)."""
+        """Every pen color the placed drawings use, in plot order, with whether it will be plotted."""
         identity = self._machine.identity
         model = get_model(identity.model if identity else LARGEST_MODEL)
-        return payloads.job_payload(self._session.compose(model))
+        job = self._session.compose(model, include_hidden=True)
+        return payloads.colors_payload(job, self._session.hidden_colors)
 
     @_bridge
     def new_plot(self):

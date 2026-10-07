@@ -41,7 +41,8 @@ class Rig:
         self.session = Session(LETTER)
         art = tmp_path / "art.svg"
         art.write_text(drawing, encoding="utf-8")
-        self.session.add(art)
+        job = self.session.load_job(art)
+        self.session.place_job(job.id, 20.0, 20.0)
         self.run_ebb = run_ebb or FakeEBB(move_sleep=0)
         self.sink = RecordingSink()
         runner = PlotRunner(factory=lambda: fake_factory(self.run_ebb)(), poll_interval=0.001)
