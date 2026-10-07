@@ -170,6 +170,16 @@ def _sample(ad) -> Progress:
 
 def estimate(svg_text: str, layer: int, settings: PlotSettings, factory=make_axidraw) -> Estimate:
     """Time and pen-down distance for one layer. Raises ValueError if the plot can't be read."""
+    return dry_run_estimate(dry_run(svg_text, layer, settings, factory))
+
+
+def dry_run(svg_text: str, layer: int, settings: PlotSettings, factory=make_axidraw, on_move=None):
+    """Run one layer through EMS in preview mode (no plotter) and return the engine object.
+
+    on_move(ad, move), if given, sees every planned move in order: it replaces EMS's preview logger,
+    ad.preview.log_sm_move, which does nothing while rendering is off. Raises ValueError if the plot
+    can't be read.
+    """
     settings = dataclasses.replace(settings)
     try:
         ad = factory()
@@ -182,6 +192,8 @@ def estimate(svg_text: str, layer: int, settings: PlotSettings, factory=make_axi
     ad.options.layer = layer
     ad.options.preview = True
     ad.options.rendering = 0
+    if on_move is not None:
+        ad.preview.log_sm_move = on_move
     try:
         ad.plot_run()
     except Exception as exc:
@@ -189,6 +201,11 @@ def estimate(svg_text: str, layer: int, settings: PlotSettings, factory=make_axi
         raise ValueError(_UNREADABLE) from exc
     if ad.digest is None:  # EMS gave up quietly, e.g. a page without a size in mm or inches
         raise ValueError(_UNREADABLE)
+    return ad
+
+
+def dry_run_estimate(ad) -> Estimate:
+    """Time and pen-down distance from an engine object that dry_run() has run."""
     stats = ad.plot_status.stats
     # EMS fills down_travel_tot in its report; down_travel_inch is the fallback.
     pendown_in = max(stats.down_travel_tot, stats.down_travel_inch)

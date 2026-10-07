@@ -136,3 +136,9 @@ def test_layers_mode_plots_exactly_the_requested_layer():
         stats = ad.plot_status.stats
         drawn_mm = max(stats.down_travel_tot, stats.down_travel_inch) * 25.4
         assert drawn_mm == pytest.approx(5 * layer, abs=0.01)
+
+
+def test_preview_logger_used_for_the_planned_path():
+    ad = axidraw.AxiDraw()
+    assert list(inspect.signature(ad.preview.log_sm_move).parameters) == ["ad_ref", "move"]
+    assert hasattr(ad.pen.phys, "z_up")
