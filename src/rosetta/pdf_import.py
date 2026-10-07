@@ -5,6 +5,7 @@ from pathlib import Path
 import pymupdf
 from lxml import etree
 
+from rosetta.colors import BLACK, is_white, resolve_paint
 from rosetta.errors import ImportProblem
 from rosetta.svgdoc import _PARSER, SVG_NS
 
@@ -19,6 +20,7 @@ UNREADABLE = "This PDF can't be read."
 PASSWORD_PROTECTED = "This PDF is password-protected. Remove the password and export it again."
 
 _IMAGE = f"{{{SVG_NS}}}image"
+_PATH = f"{{{SVG_NS}}}path"
 _XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
 _INVISIBLE_TEXT = 3  # text render mode 3 (e.g. an OCR layer): present but never painted
 _CLIP_TOLERANCE_PT = 1.0  # clips this close to the page edge are the page-sized kind
@@ -61,6 +63,7 @@ def pdf_page_to_svg(path: Path, page_index: int = 0) -> PdfPage:
     except etree.XMLSyntaxError as exc:
         raise ImportProblem(UNREADABLE) from exc
     _blank_image_data(root)
+    _drop_fills_under_their_outlines(root)
     root.set("width", f"{width_pt:.4f}pt")
     root.set("height", f"{height_pt:.4f}pt")
     if not root.get("viewBox"):
@@ -74,6 +77,35 @@ def _blank_image_data(root: etree._Element) -> None:
         image.set(_XLINK_HREF, "")
         if image.get("href") is not None:
             image.set("href", "")
+
+
+def _drop_fills_under_their_outlines(root: etree._Element) -> None:
+    """MuPDF writes a shape that is filled and stroked as two paths in a row: the fill (no stroke),
+    then the same outline stroked (no fill). Rosetta draws outlines, so keeping both would draw the
+    outline twice (two colors would also add a pen color and a "solid fills" warning for the fill).
+
+    The fill goes, unless its outline is white: white is skipped later, and the shape must not vanish.
+    """
+    for path in list(root.iter(_PATH)):
+        outline = path.getnext()
+        if (
+            outline is not None
+            and outline.tag == _PATH
+            and _is_fill_only(path)
+            and _is_stroke_only(outline)
+            and path.get("d") == outline.get("d")
+            and path.get("transform") == outline.get("transform")
+            and not is_white(resolve_paint(outline.get("stroke"), default=BLACK) or BLACK)
+        ):
+            path.getparent().remove(path)
+
+
+def _is_fill_only(path: etree._Element) -> bool:
+    return path.get("fill", "").strip() != "none" and path.get("stroke", "none").strip() == "none"
+
+
+def _is_stroke_only(path: etree._Element) -> bool:
+    return path.get("fill", "").strip() == "none" and path.get("stroke", "none").strip() != "none"
 
 
 def _has_clip(page) -> bool:

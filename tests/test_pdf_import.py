@@ -6,6 +6,7 @@ import pytest
 
 from rosetta.errors import ImportProblem
 from rosetta.flatten import flatten
+from rosetta.loader import load_artwork
 from rosetta.pdf_import import page_count, pdf_page_to_svg
 from rosetta.svgdoc import normalize
 from tests.helpers import shapes_bbox
@@ -147,6 +148,94 @@ def test_page_sized_clip_on_a_rotated_page_is_not_reported(tmp_path):
     doc.save(path)
     doc.close()
     assert pdf_page_to_svg(path, 0).has_clip is False
+
+
+# A shape that is filled and stroked: MuPDF writes two paths (the fill, then the same outline stroked).
+# Rosetta draws outlines only, so the pair must come out as one outline, in the stroke's color.
+
+def _shape_pdf(tmp_path, draw, name="shape.pdf"):
+    """A 100 x 80 mm page; draw(page) puts shapes on it."""
+    path = tmp_path / name
+    doc = pymupdf.open()
+    draw(doc.new_page(width=100 * MM, height=80 * MM))
+    doc.save(path)
+    doc.close()
+    return path
+
+
+_BOX = pymupdf.Rect(10 * MM, 10 * MM, 60 * MM, 40 * MM)
+BLACK, RED, BLUE, WHITE = (0, 0, 0), (1, 0, 0), (0, 0, 1), (1, 1, 1)
+
+
+def _codes(artwork):
+    return {issue.code for issue in artwork.issues}
+
+
+@pytest.mark.parametrize("draw_shape", [
+    lambda page, **paint: page.draw_rect(_BOX, width=1, **paint),
+    lambda page, **paint: page.draw_circle(pymupdf.Point(35 * MM, 25 * MM), 12 * MM, width=1, **paint),
+], ids=["rectangle", "circle"])
+def test_a_filled_and_stroked_shape_in_one_color_is_drawn_once(tmp_path, draw_shape):
+    path = _shape_pdf(tmp_path, lambda page: draw_shape(page, color=BLACK, fill=BLACK))
+    assert pdf_page_to_svg(path, 0).svg.count("<path") == 1
+    art = load_artwork(path)
+    shape, = art.shapes
+    assert shape.stroked and shape.color == "#000000"
+    outline, = shape.polylines
+    assert outline[0] == pytest.approx(outline[-1])  # the one closed loop
+    assert "fill_only" not in _codes(art)
+
+
+def test_a_filled_and_stroked_shape_in_two_colors_is_drawn_in_the_stroke_color_only(tmp_path):
+    path = _shape_pdf(tmp_path, lambda page: page.draw_rect(_BOX, color=RED, fill=BLUE, width=1))
+    art = load_artwork(path)
+    shape, = art.shapes
+    assert (shape.color, shape.stroked) == ("#ff0000", True)  # no blue pen layer
+    assert len(shape.polylines) == 1
+    assert "fill_only" not in _codes(art)  # and no false "solid fills" warning
+
+
+def test_a_white_filled_box_with_a_black_outline_is_just_the_outline(tmp_path):
+    path = _shape_pdf(tmp_path, lambda page: page.draw_rect(_BOX, color=BLACK, fill=WHITE, width=1))
+    art = load_artwork(path)
+    shape, = art.shapes
+    assert shape.color == "#000000"
+    assert _codes(art).isdisjoint({"fill_only", "white"})  # the fill was not a separate white shape
+
+
+def test_each_filled_and_stroked_shape_on_a_page_is_drawn_once(tmp_path):
+    def draw(page):
+        page.draw_rect(_BOX, color=BLACK, fill=BLACK, width=1)
+        page.draw_rect(pymupdf.Rect(65 * MM, 10 * MM, 90 * MM, 40 * MM), color=RED, fill=BLUE, width=1)
+        page.draw_rect(pymupdf.Rect(10 * MM, 50 * MM, 40 * MM, 70 * MM), color=BLACK, width=1)  # stroke only
+
+    art = load_artwork(_shape_pdf(tmp_path, draw))
+    assert sorted(shape.color for shape in art.shapes) == ["#000000", "#000000", "#ff0000"]
+    assert all(len(shape.polylines) == 1 for shape in art.shapes)
+
+
+def test_a_fill_without_an_outline_stays_and_its_outline_is_drawn_once(tmp_path):
+    path = _shape_pdf(tmp_path, lambda page: page.draw_rect(_BOX, color=None, fill=BLUE))
+    art = load_artwork(path)
+    shape, = art.shapes
+    assert (shape.color, shape.filled, shape.stroked) == ("#0000ff", True, False)
+    assert len(shape.polylines) == 1
+    assert "fill_only" in _codes(art)
+
+
+def test_an_outline_is_kept_beside_a_fill_that_is_not_its_own(tmp_path):
+    def draw(page):
+        page.draw_rect(_BOX, color=None, fill=BLUE)  # a fill...
+        page.draw_rect(pymupdf.Rect(20 * MM, 15 * MM, 50 * MM, 35 * MM), color=RED, width=1)  # ...with another shape's outline
+
+    art = load_artwork(_shape_pdf(tmp_path, draw))
+    assert sorted(shape.color for shape in art.shapes) == ["#0000ff", "#ff0000"]
+
+
+def test_a_fill_under_a_white_outline_is_kept_because_white_is_skipped(tmp_path):
+    path = _shape_pdf(tmp_path, lambda page: page.draw_rect(_BOX, color=WHITE, fill=BLACK, width=1))
+    art = load_artwork(path)
+    assert "#000000" in {shape.color for shape in art.shapes}  # the shape does not vanish
 
 
 def test_big_embedded_picture_is_dropped_from_the_svg(tmp_path):
