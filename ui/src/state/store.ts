@@ -1,0 +1,135 @@
+/** The app's one state, and how Lit components follow it. */
+import type { ReactiveController, ReactiveControllerHost } from "lit";
+import type { AppStart, JobInfo, MachineStatus, Material, PaperChoice, PenColor, PieceInfo, PlotStatus } from "../bridge/contract";
+import type { Units } from "../geometry/units";
+
+export type Tool = "select" | "hand" | "zoom" | "rotate" | "pen";
+
+export interface NoticeAction {
+  label: string;
+  run: () => void;
+}
+
+/** The notification strip across the top of the plate (spec §4.6). */
+export interface Notice {
+  kind: "info" | "warning" | "error";
+  message: string;
+  details?: string;
+  actions?: NoticeAction[];
+}
+
+export type Dialog =
+  | { kind: "pages"; name: string; pages: number; resolve: (page: number | null) => void }
+  | { kind: "model" }
+  | { kind: "text"; title: string; text: string }
+  | { kind: "shortcuts" }
+  | { kind: "about" };
+
+export interface ViewOptions {
+  grid: boolean;
+  margins: boolean;
+  original: boolean;
+}
+
+export interface AppState {
+  ready: boolean;
+  start: AppStart | null;
+  units: Units;
+  machine: MachineStatus;
+  material: Material;
+  paper: PaperChoice;
+  margin: number;
+  jobs: JobInfo[];
+  pieces: PieceInfo[];
+  colors: PenColor[];
+  selection: string[];
+  tool: Tool;
+  /** Set Home's first click switched the motors off; the next click confirms. */
+  homing: boolean;
+  jogStep: 1 | 10;
+  /** The W/H and W%/H% link in the control bar. */
+  linkScale: boolean;
+  view: ViewOptions;
+  notice: Notice | null;
+  dialog: Dialog | null;
+  plot: PlotStatus;
+}
+
+export const NO_MACHINE: MachineStatus = {
+  state: "no_plotter",
+  firmware: "",
+  power_ok: false,
+  model: null,
+  model_name: null,
+  penlift: null,
+  label: null,
+  nickname: null,
+  old_firmware: false,
+  position: null,
+  pen_down: 30,
+  pen_type: "fineliner",
+};
+
+export const IDLE_PLOT: PlotStatus = { state: "idle", actions: [], layer: 0, layers: 0, color: null, name: null, message: "", details: "" };
+
+export function initialState(): AppState {
+  return {
+    ready: false,
+    start: null,
+    units: "in",
+    machine: { ...NO_MACHINE },
+    material: { x: 0, y: 0, width: 279.4, height: 215.9, reach: null, fits: null },
+    paper: { size: "letter", orientation: "landscape", custom_width_mm: null, custom_height_mm: null },
+    margin: 6.35,
+    jobs: [],
+    pieces: [],
+    colors: [],
+    selection: [],
+    tool: "select",
+    homing: false,
+    jogStep: 1,
+    linkScale: true,
+    view: { grid: true, margins: true, original: false },
+    notice: null,
+    dialog: null,
+    plot: { ...IDLE_PLOT },
+  };
+}
+
+export class Store<T extends object> {
+  private readonly listeners = new Set<() => void>();
+
+  constructor(public state: T) {}
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  update(change: Partial<T> | ((state: T) => Partial<T>)): void {
+    const patch = typeof change === "function" ? change(this.state) : change;
+    this.state = { ...this.state, ...patch };
+    for (const listener of [...this.listeners]) listener();
+  }
+}
+
+/** Re-renders a Lit component whenever the store changes. */
+export class StoreController<T extends object> implements ReactiveController {
+  private unsubscribe: (() => void) | null = null;
+
+  constructor(
+    private readonly host: ReactiveControllerHost,
+    private readonly store: Store<T>,
+  ) {
+    host.addController(this);
+  }
+
+  hostConnected(): void {
+    this.unsubscribe = this.store.subscribe(() => this.host.requestUpdate());
+  }
+
+  hostDisconnected(): void {
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+  }
+}
