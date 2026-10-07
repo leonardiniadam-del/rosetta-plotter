@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from rosetta.engine.options import PlotSettings
 from rosetta.engine.preview import Run, plan_layer
-from rosetta.engine.runner import PlotOutcome, PlotResult, PlotRunner
+from rosetta.engine.runner import PlotOutcome, PlotResult, PlotRunner, set_resume_origin_home
 from rosetta.errors import UserProblem
 from rosetta.models import get_model
 from rosetta.plotsvg import plot_svg
@@ -212,6 +212,60 @@ class PlotController:
             self._expect("load_pen")
             self._run_layer(resume=False)
 
+    def pause(self) -> None:
+        """Pause at the next step, pen up. A late click after the run has ended does nothing."""
+        with self._lock:
+            if self._state not in ("plotting", "homing"):
+                return
+            self._pause_wanted = True
+            self._runner.pause()
+            if self._state == "plotting":
+                self._set("pausing", "Pausing...")
+
+    def resume(self) -> None:
+        with self._lock:
+            self._expect("paused", "paused_at_home")
+            self._run_layer(resume=True)
+
+    def home(self) -> None:
+        """While paused: send the pen Home (to check or swap it). Resume then carries on from there."""
+        with self._lock:
+            self._expect("paused")
+            svg, settings, runner = self._resume_svg, self._settings, self._runner
+            self._begin_run()
+            self._set("homing", "Sending the pen Home.")
+            self._start_worker(lambda: runner.return_home(svg, settings), self._after_home)
+
+    def cancel(self) -> None:
+        """Stop the plot for good. If the pen isn't known to be Home, the motors go off for re-homing."""
+        with self._lock:
+            self._expect("load_pen", "paused", "paused_at_home", "reconnect", "slide_home", "not_connected")
+            self._end_plot("Plot cancelled.")
+
+    def reconnect(self) -> None:
+        """After a lost cable or an error: once the plotter answers, free its carriage for a slide Home."""
+        with self._lock:
+            self._expect("reconnect")
+            if self._machine.release_motors():
+                self._set("slide_home", SLIDE_HOME)
+            else:
+                self._set("reconnect", "Still no plotter found. Check the USB cable and the power adapter, "
+                                       "then click Continue.")
+
+    def rehomed(self) -> None:
+        """The student slid the pen Home, so the paused plot resumes from there (spec §10)."""
+        with self._lock:
+            self._expect("slide_home")
+            self._resume_svg = set_resume_origin_home(self._resume_svg)
+            self._at_home = True
+            self._set("paused_at_home", "The pen is Home. Click Resume to carry on.")
+
+    def retry(self) -> None:
+        """Try the run again after it couldn't find the plotter (nothing moved)."""
+        with self._lock:
+            self._expect("not_connected")
+            self._run_layer(resume=self._retry_resume)
+
     def shutdown(self) -> None:
         """The app is closing: pause a running plot (pen up) and wait for the engine to let go."""
         with self._lock:
@@ -311,6 +365,21 @@ class PlotController:
             self._at_home = self._was_at_home  # the run never started, so nothing moved
             self._set("not_connected", result.message)
         else:  # DISCONNECTED or ERROR
+            self._lost(result)
+
+    def _after_home(self, result: PlotResult) -> None:
+        if result.resume_svg is not None:
+            self._resume_svg = result.resume_svg
+        outcome = result.outcome
+        if outcome is PlotOutcome.COMPLETED:
+            self._at_home = True
+            self._set("paused_at_home", "The pen is Home. Check or swap it, then click Resume.")
+        elif outcome is PlotOutcome.PAUSED:
+            self._set("paused", result.message)
+        elif outcome is PlotOutcome.NOT_CONNECTED:
+            self._at_home = self._was_at_home
+            self._set("paused", result.message)
+        else:
             self._lost(result)
 
     def _lost(self, result: PlotResult) -> None:

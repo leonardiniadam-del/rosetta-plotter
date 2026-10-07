@@ -2,10 +2,12 @@
 import pytest
 
 from rosetta.app.events import RecordingSink
-from rosetta.app.plotjob import CLIPPED, NOTHING_TO_PLOT, PREPARE_FIRST, PlotController
+from rosetta.app.plotjob import (
+    CLIPPED, FINISH_FIRST, HOME_UNKNOWN, NOT_NOW, NOTHING_TO_PLOT, PREPARE_FIRST, PlotController,
+)
 from rosetta.app.session import Session
 from rosetta.compose import Material
-from rosetta.engine.runner import PlotRunner
+from rosetta.engine.runner import PlotRunner, Progress
 from rosetta.errors import UserProblem
 from tests.app_helpers import make_machine, wait_for
 from tests.fake_ebb import FakeEBB, IFakeEBB, fake_factory, skip_engine_waits
@@ -136,3 +138,116 @@ def test_a_run_that_finds_no_plotter_has_moved_nothing(tmp_path):
     rig.controller.start()
     rig.wait_until("not_connected")
     assert rig.controller.status()["actions"] == ["retry", "cancel"]
+
+
+def _pause_after(rig, moves):
+    """Press the app's Pause button once the plot has made this many moves."""
+    rig.run_ebb.on_sm = lambda count: count == moves and rig.controller.pause()
+
+
+def test_pause_then_resume_finishes_the_plot(tmp_path):
+    rig = Rig(tmp_path)
+    rig.controller.prepare()
+    _pause_after(rig, 5)
+    rig.controller.start()
+    rig.wait_until("paused")
+    assert rig.controller.status()["actions"] == ["resume", "home", "cancel"]
+    with pytest.raises(UserProblem, match=FINISH_FIRST):
+        rig.controller.prepare()
+    rig.controller.resume()
+    rig.wait_until("done")
+
+
+def test_return_home_while_paused(tmp_path):
+    rig = Rig(tmp_path)
+    rig.controller.prepare()
+    _pause_after(rig, 5)
+    rig.controller.start()
+    rig.wait_until("paused")
+    rig.controller.home()
+    rig.wait_until("paused_at_home")
+    rig.controller.resume()
+    rig.wait_until("done")
+
+
+def test_cancel_while_paused_asks_for_a_new_home(tmp_path):
+    rig = Rig(tmp_path)
+    rig.controller.prepare()
+    _pause_after(rig, 5)
+    rig.controller.start()
+    rig.wait_until("paused")
+    rig.controller.cancel()
+    assert rig.state() == "ready" and HOME_UNKNOWN in rig.controller.status()["message"]
+    assert rig.machine.status()["state"] == "not_homed"
+
+
+def test_cancel_at_a_pen_change_keeps_home(tmp_path):
+    rig = Rig(tmp_path, TWO_COLORS)
+    rig.controller.prepare()
+    rig.controller.start()
+    rig.controller.cancel()
+    assert rig.state() == "ready" and rig.machine.status()["state"] == "ready"
+
+
+def test_a_pulled_cable_resumes_after_a_slide_home(tmp_path):
+    rig = Rig(tmp_path, run_ebb=FakeEBB(die_after_moves=5, move_sleep=0))
+    rig.controller.prepare()
+    rig.controller.start()
+    rig.wait_until("reconnect")
+    assert "Plotter disconnected" in rig.controller.status()["message"]
+    rig.run_ebb = FakeEBB(move_sleep=0)  # plugged back in
+    rig.controller.reconnect()
+    assert rig.state() == "slide_home"
+    rig.controller.rehomed()
+    assert rig.state() == "paused_at_home"
+    rig.controller.resume()
+    rig.wait_until("done")
+
+
+def test_reconnect_waits_until_the_plotter_is_back(tmp_path):
+    rig = Rig(tmp_path, run_ebb=FakeEBB(die_after_moves=5, move_sleep=0))
+    rig.controller.prepare()
+    rig.controller.start()
+    rig.wait_until("reconnect")
+    rig.bench.ebb = None  # still unplugged
+    rig.controller.reconnect()
+    assert rig.state() == "reconnect" and "Still no plotter" in rig.controller.status()["message"]
+
+
+def test_retry_after_no_plotter_was_found(tmp_path):
+    rig = Rig(tmp_path)
+    rig.controller.prepare()
+    rig.run_ebb = None
+    rig.controller.start()
+    rig.wait_until("not_connected")
+    rig.run_ebb = FakeEBB(move_sleep=0)
+    rig.controller.retry()
+    rig.wait_until("done")
+
+
+def test_a_pause_asked_for_before_the_run_listens_is_asked_again(tmp_path):
+    class CountingRunner:
+        pauses = 0
+
+        def pause(self):
+            self.pauses += 1
+
+    rig = Rig(tmp_path)
+    runner = CountingRunner()
+    controller = PlotController(rig.machine, rig.session, RecordingSink(), runner_factory=lambda: runner)
+    controller.prepare()
+    controller._pause_wanted = True  # what pause() leaves when the run wasn't listening yet
+    controller._on_progress(Progress(1.0, 2.0, 3.0))
+    assert runner.pauses == 1
+
+
+def test_buttons_that_do_not_fit_the_state_are_refused(tmp_path):
+    rig = Rig(tmp_path)
+    rig.controller.prepare()
+    for action in (rig.controller.resume, rig.controller.home, rig.controller.cancel,
+                   rig.controller.continue_pen, rig.controller.reconnect, rig.controller.rehomed,
+                   rig.controller.retry):
+        with pytest.raises(UserProblem, match=NOT_NOW):
+            action()
+    rig.controller.pause()  # a late Pause click is harmless
+    assert rig.state() == "ready"
