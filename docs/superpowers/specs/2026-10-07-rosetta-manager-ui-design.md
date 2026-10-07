@@ -36,6 +36,7 @@ Adam's direction:
 | Theme | **Dark**, like Illustrator's default. |
 | Toolkit | **Custom compact:** TypeScript + Lit + our own styling. Fluent UI is dropped because its controls are sized for touch and the look here is a dense desktop tool. |
 | Placement | Drawings are placed at **100%, never auto-shrunk.** Architecture drawings are to scale. Off-paper parts show red and aren't drawn. Fit to paper is a menu command. A drawing's **origin is always its top-left corner** (the corner nearest Home), and X/Y always refer to it. |
+| Scaling | **Illustrator-style:** a corner drag stretches freely, and Shift keeps proportions. The control bar has **W% / H%** with a link toggle (linked by default) and a single **Scale %** when linked. A stretched drawing always shows its separate W% and H%, so a stretch is never hidden. Stretching follows the drawing's own sides; at a free angle (not a quarter turn) a corner drag keeps proportions, since stretching along the paper's edges would slant it. |
 | Rotation | **Free rotation:** the Rotate tool turns a drawing to any angle, Shift snaps to 15°, and the angle can be typed. **Rotate paper** turns the paper and everything on it 90°. |
 | Units | **Decimal inches, millimetres, centimetres.** No measurements are drawn on the work area; dimensions appear in the control bar for whatever is selected. |
 | Pens | A Pens panel lists the colors in plot order. An **eye toggle skips a color** in the plot. |
@@ -77,7 +78,8 @@ Adam's direction:
 **Undo** covers placement edits only: move, scale, rotate, rotate paper, duplicate, delete and place. It never covers plotter actions.
 
 ### 2.2 Control bar (context)
-- **A placed drawing is selected:** the drawing's name, then its **X, Y** (its top-left corner), **W, H** (proportions always locked, so W and H change together) and **angle** (any value; typed or set with the Rotate tool). With several selected, the values describe the box around them all.
+- **A placed drawing is selected:** the drawing's name, then its **X, Y** (its top-left corner), **W, H** (the size of its upright box), **scale** as **W% / H%** with a link toggle (shown as one Scale % while linked), and **angle** (any value; typed or set with the Rotate tool). With several selected, the values describe the box around them all, and scale and angle apply to each drawing about the group's center.
+  - Typing **W or H** scales the drawing: proportionally while linked; while unlinked it stretches that side, which works at quarter-turn angles only (at a free angle the unlinked W/H fields are read-only, with the tooltip "Use W% and H% to stretch a turned drawing").
 - **Nothing selected:**
   - **Paper** size (the presets from spec §5.2 plus Custom) with its **W, H** readout, **orientation**, and the paper's **X/Y** (its corner nearest Home; 0, 0 = lined up with Home);
   - **Mark corner at pen**, which sets X/Y to the pen's position;
@@ -112,7 +114,8 @@ Every tool has a tooltip with its name and shortcut. The active tool is highligh
 - **Interaction:**
   - Wheel zooms around the cursor. Hand or Space-drag pans. Fit paper and fit reach are commands.
   - **Select:** click a drawing to select it, Shift-click to add, drag on empty space to marquee.
-  - **Move:** drag the selection. Drag a corner handle to scale proportionally around the opposite corner.
+  - **Move:** drag the selection; Shift keeps the move horizontal or vertical.
+  - **Scale:** drag a corner handle to scale around the opposite corner. It stretches freely; Shift keeps proportions. At a free angle a corner drag always keeps proportions.
   - **Rotate:** with the Rotate tool, drag around the selection to turn it about its center (Shift snaps to 15°). A rotated drawing's X/Y/W/H describe its upright bounding box.
   - **Nudge:** arrow keys move the selection 1 mm, Shift+arrow 10 mm.
   - **Snap:** while dragging, the selection's box snaps to the paper's corners, edges, center and margin lines, and to other drawings' box edges, within 6 screen px. A thin guide shows the snap line. Hold Alt to turn snapping off.
@@ -279,6 +282,7 @@ These come first in Plan 2b, each test-first.
   - `place_job(job_id, x, y) -> Piece` (scale 1, rotation 0); pieces carry `job_id`.
   - `remove_job(job_id)`: removes its pieces too.
   - `Session.add` and its use of `initial_placement` go away. (`compose.initial_placement` stays, for the CLI.)
+- **Stretching:** `Placement` gets `scale_y: float | None = None`. `scale` is the scale along the artwork's own width and `scale_y` along its own height (`None` means the same as `scale`). Points are scaled on the artwork's own axes first, then rotated. `place_point`, `rotated_size`, `compose`, `session`, the payloads (`placement` gains `scale_y`, always a number) and `piece_place(piece_id, x, y, scale, rotation, scale_y)` follow; the CLI's job file accepts an optional `scale_y`.
 - **Free rotation:** `Placement.rotation` becomes any angle in degrees (clockwise on screen). `geometry.place_point` and `rotated_size` handle any angle: the placement's (x, y) is the top-left of the rotated, scaled artwork frame's upright bounding box. The multiple-of-90 checks in `compose` and `session` go; finite angles are normalized to [0, 360). The CLI's job file accepts any angle.
 - **Rotate paper:** `Session.rotate_paper()` swaps the paper's width and height and turns every piece 90° clockwise about the paper, mapping each piece's box (x, y, w, h) to (H − y − h, x, h, w), where H is the paper's height before the turn, and adding 90° to its angle. The bridge gets `paper_rotate()`, returning `material` and every piece's placement.
 - **Hidden pens:** `Session.hidden_colors` is left out by `compose`; `compose_job` gets a `skip_colors` argument, alongside `skip_white`. The plot, times and trace all follow it.
@@ -293,7 +297,7 @@ These come first in Plan 2b, each test-first.
   - **Changed:**
     - `piece_duplicate` returns the slim piece shape;
     - `job_colors` lists all colors with a `visible` flag;
-    - `piece_place` accepts any angle.
+    - `piece_place` accepts any angle and an optional `scale_y`.
   - **Removed:** `artwork_import`, replaced by `job_import`.
 - **Tests:** the existing session, payload and api tests are updated to match, the full suite stays green, and the smoke window still passes.
 
@@ -316,7 +320,7 @@ These come first in Plan 2b, each test-first.
 ## 9. Testing
 - **Vitest, no browser:**
   - **Units** and parsing.
-  - **Placement math**, checked against fixtures generated from `rosetta.geometry.place_point`, for 0°, 90°, 180°, 270° and several free angles (15°, 33.5°, 300°), at several scales; rotate-about-center and rotate-paper round trips.
+  - **Placement math**, checked against fixtures generated from `rosetta.geometry.place_point`, for 0°, 90°, 180°, 270° and several free angles (15°, 33.5°, 300°), at several scales including stretched ones (different `scale` and `scale_y`); rotate-about-center and rotate-paper round trips; W/H edits with the link on and off.
   - **Snapping**, rotate about center, bounding boxes, and the camera transforms.
   - **The store,** including undo.
   - **The serialization queue** in the bridge client.
