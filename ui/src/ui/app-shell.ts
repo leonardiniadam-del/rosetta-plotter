@@ -3,6 +3,7 @@
  * notification strip over it, the dock of panels on the right, and the status bar.
  */
 import { css, html, LitElement } from "lit";
+import "./controlbar";
 import "./dialogs";
 import "./plate";
 import "./statusbar";
