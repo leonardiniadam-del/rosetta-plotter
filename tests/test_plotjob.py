@@ -1,13 +1,17 @@
 """PlotController runs the real EMS engine: the Machine against one fake EBB, plot runs against another."""
+import threading
+
 import pytest
 
 from rosetta.app.events import RecordingSink
-from rosetta.app.machine import BUSY
+from rosetta.app.machine import BUSY, NO_POWER, MachineState
 from rosetta.app.plotjob import (
-    CLIPPED, FINISH_FIRST, HOME_UNKNOWN, NOT_NOW, NOTHING_TO_PLOT, PREPARE_FIRST, PlotController,
+    CLIPPED, DONE, FINISH_FIRST, HOME_UNKNOWN, NOT_NOW, NOTHING_TO_PLOT, PREPARE_FIRST, STILL_PREPARING,
+    UNEXPECTED, PlotController,
 )
 from rosetta.app.session import Session
 from rosetta.compose import Material
+from rosetta.engine.preview import plan_layer
 from rosetta.engine.runner import PlotRunner, Progress
 from rosetta.errors import UserProblem
 from tests.app_helpers import make_machine, wait_for
@@ -29,7 +33,7 @@ class Rig:
     """A homed Machine on one fake plotter, plot runs on another, and a controller over both.
     Replace rig.run_ebb to change what the next plot run finds (None: no plotter at all)."""
 
-    def __init__(self, tmp_path, drawing=ONE_COLOR, run_ebb=None):
+    def __init__(self, tmp_path, drawing=ONE_COLOR, run_ebb=None, planner=plan_layer):
         self.plotter_ebb = IFakeEBB(nickname="Lab m1p1", move_sleep=0)
         self.machine, self.bench, _store = make_machine(tmp_path, self.plotter_ebb)
         self.machine.scan()
@@ -41,7 +45,9 @@ class Rig:
         self.run_ebb = run_ebb or FakeEBB(move_sleep=0)
         self.sink = RecordingSink()
         runner = PlotRunner(factory=lambda: fake_factory(self.run_ebb)(), poll_interval=0.001)
-        self.controller = PlotController(self.machine, self.session, self.sink, runner_factory=lambda: runner)
+        self.controller = PlotController(
+            self.machine, self.session, self.sink, runner_factory=lambda: runner, planner=planner
+        )
 
     def state(self) -> str:
         return self.controller.status()["state"]
@@ -122,6 +128,94 @@ def test_changes_make_the_prepared_plot_stale(tmp_path):
     assert rig.state() == "idle"
     with pytest.raises(UserProblem, match=PREPARE_FIRST):
         rig.controller.start()
+
+
+def test_a_change_during_a_trace_drops_the_prepared_plot_after_it(tmp_path, monkeypatch):
+    rig = Rig(tmp_path)
+    rig.controller.prepare()
+    tracing, let_go = threading.Event(), threading.Event()
+    real_trace = rig.machine.trace
+
+    def slow_trace(box):
+        tracing.set()
+        let_go.wait(5)
+        return real_trace(box)
+
+    monkeypatch.setattr(rig.machine, "trace", slow_trace)
+    worker = threading.Thread(target=rig.controller.trace)
+    worker.start()
+    assert tracing.wait(5)
+    rig.controller.invalidate()  # the piece was moved while the pen went around it
+    let_go.set()
+    worker.join()
+    assert rig.state() == "idle"
+    with pytest.raises(UserProblem, match=PREPARE_FIRST):
+        rig.controller.start()  # it would have plotted the drawing where it used to be
+
+
+def test_a_change_during_a_plot_drops_the_prepared_plot_once_it_ends(tmp_path):
+    rig = Rig(tmp_path)
+    rig.controller.prepare()
+    _pause_after(rig, 5)
+    rig.controller.start()
+    rig.wait_until("paused")
+    rig.controller.invalidate()  # the running plot carries on with its own copy...
+    rig.controller.resume()
+    rig.wait_until("idle")  # ...but "Plot another copy" mustn't plot the old drawing
+    assert rig.controller.status()["message"] == DONE
+    assert rig.machine.status()["state"] == "ready"
+
+
+class _SlowPlanner:
+    """plan_layer, except that it waits for let_go (entered: it has started waiting)."""
+
+    def __init__(self):
+        self.entered, self.let_go = threading.Event(), threading.Event()
+
+    def __call__(self, svg, number, settings):
+        self.entered.set()
+        self.let_go.wait(5)
+        return plan_layer(svg, number, settings)
+
+
+def test_start_and_trace_wait_until_the_plot_is_prepared(tmp_path):
+    planner = _SlowPlanner()
+    rig = Rig(tmp_path, planner=planner)
+    planner.let_go.set()
+    rig.controller.prepare()  # an earlier plot, ready to start
+    planner.entered.clear()
+    planner.let_go.clear()
+    preparing = threading.Thread(target=rig.controller.prepare)
+    preparing.start()
+    assert planner.entered.wait(5)
+    for action in (rig.controller.start, rig.controller.trace, rig.controller.prepare):
+        with pytest.raises(UserProblem, match=STILL_PREPARING):
+            action()
+    planner.let_go.set()
+    preparing.join()
+    assert rig.state() == "ready" and rig.machine.status()["state"] == "ready"
+
+
+def test_a_change_while_preparing_is_not_lost(tmp_path):
+    planner = _SlowPlanner()
+    rig = Rig(tmp_path, planner=planner)
+    replies = []
+
+    def prepare():
+        try:
+            replies.append(rig.controller.prepare())
+        except UserProblem as problem:
+            replies.append(problem)
+
+    preparing = threading.Thread(target=prepare)
+    preparing.start()
+    assert planner.entered.wait(5)
+    rig.controller.invalidate()  # the student moved a piece meanwhile
+    planner.let_go.set()
+    preparing.join()
+    assert isinstance(replies[0], UserProblem) and rig.state() == "idle"
+    rig.controller.prepare()  # what the page does when the plot goes back to idle
+    assert rig.state() == "ready"
 
 
 def test_trace_goes_around_the_drawing_and_home(tmp_path):
@@ -242,6 +336,87 @@ def test_retry_after_no_plotter_was_found(tmp_path):
     rig.wait_until("not_connected")
     rig.run_ebb = FakeEBB(move_sleep=0)
     rig.controller.retry()
+    rig.wait_until("done")
+
+
+def test_each_pen_change_checks_the_power_first(tmp_path):
+    rig = Rig(tmp_path, TWO_COLORS)
+    rig.controller.prepare()
+    rig.controller.start()  # asks for the first pen
+    rig.plotter_ebb.voltage = 0  # the adapter was pulled while the pen was swapped
+    with pytest.raises(UserProblem, match=NO_POWER):
+        rig.controller.continue_pen()
+    assert rig.state() == "load_pen" and rig.machine.status()["power_ok"] is False
+    rig.plotter_ebb.voltage = 300
+    rig.controller.continue_pen()
+    rig.wait_until("load_pen")
+    rig.controller.continue_pen()
+    rig.wait_until("done")
+
+
+def test_resume_and_return_home_check_the_power_first(tmp_path):
+    rig = Rig(tmp_path)
+    rig.controller.prepare()
+    _pause_after(rig, 5)
+    rig.controller.start()
+    rig.wait_until("paused")
+    rig.plotter_ebb.voltage = 0
+    for action in (rig.controller.resume, rig.controller.home):
+        with pytest.raises(UserProblem, match=NO_POWER):
+            action()
+    assert rig.state() == "paused"
+    rig.plotter_ebb.voltage = 300
+    rig.controller.resume()
+    rig.wait_until("done")
+
+
+def test_retry_checks_the_power_first(tmp_path):
+    rig = Rig(tmp_path)
+    rig.controller.prepare()
+    rig.run_ebb = None
+    rig.controller.start()
+    rig.wait_until("not_connected")
+    rig.plotter_ebb.voltage = 0
+    with pytest.raises(UserProblem, match=NO_POWER):
+        rig.controller.retry()
+    assert rig.state() == "not_connected"
+
+
+def test_a_failure_after_a_run_never_leaves_the_plotter_plotting(tmp_path, monkeypatch):
+    rig = Rig(tmp_path)
+    rig.controller.prepare()
+
+    def bug(at_home):
+        raise IndexError("a bug")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(rig.machine, "after_plot", bug)
+        rig.controller.start()
+        wait_for(lambda: rig.controller.status()["message"] == UNEXPECTED)
+    assert rig.state() == "ready"
+    assert rig.machine.state is MachineState.NO_PLOTTER  # so Step 1 finds the plotter again
+    assert rig.machine.scan()["state"] == "not_homed"
+
+
+def test_a_failure_with_progress_to_come_back_to_asks_for_the_cable(tmp_path, monkeypatch):
+    rig = Rig(tmp_path)
+    rig.controller.prepare()
+    _pause_after(rig, 5)
+    record, failed = rig.sink.emit, []
+
+    def fails_once_at_the_pause(name, data):
+        if data.get("state") == "paused" and not failed:
+            failed.append(True)
+            raise RuntimeError("a bug")
+        record(name, data)
+
+    monkeypatch.setattr(rig.sink, "emit", fails_once_at_the_pause)
+    rig.controller.start()
+    rig.wait_until("reconnect")
+    assert rig.machine.state is MachineState.PLOTTING  # the plot can still be resumed
+    rig.controller.reconnect()
+    rig.controller.rehomed()
+    rig.controller.resume()
     rig.wait_until("done")
 
 

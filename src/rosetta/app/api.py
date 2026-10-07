@@ -71,6 +71,7 @@ class Api:
         self._choose_files = None
         self._closing_allowed = False
         self._profile_key = None
+        self._plotter_seen = None  # (identity, profile key) of the last plotter found
 
     # Wiring for main.py (underscored, so the page can't call it).
 
@@ -397,8 +398,12 @@ class Api:
         return Material(0.0, 0.0, width, height)
 
     def _load_profile(self) -> None:
-        """When a different plotter shows up, start from the pen settings it was last used with."""
-        key = self._machine.profile_key()
+        """When a different plotter shows up, start from the pen settings it was last used with. A plot
+        prepared for another plotter (or under another name) is out of date: its reach and pen differ."""
+        identity, key = self._machine.identity, self._machine.profile_key()
+        if identity is not None and (identity, key) != self._plotter_seen:
+            self._plotter_seen = (identity, key)
+            self._plot.invalidate()
         if key == self._profile_key:
             return
         self._profile_key = key

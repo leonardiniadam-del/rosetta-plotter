@@ -289,6 +289,35 @@ class Machine:
             finally:
                 plotter.disconnect()
 
+    def power_ok_for_plot(self) -> bool | None:
+        """Mid-plot, before each run (spec §10): is the power adapter plugged in? None if the plotter
+        can't be reached; the run itself then says so."""
+        with self._using(MachineState.PLOTTING, wait=HANDOVER_WAIT_S):
+            plotter = self._new_plotter()
+            try:
+                if not plotter.connect(self._settings()):
+                    return None
+                self.power_ok = plotter.power_ok()
+                return self.power_ok
+            except Exception:
+                logger.info("Couldn't check the power adapter", exc_info=True)
+                return None
+            finally:
+                with contextlib.suppress(Exception):
+                    plotter.disconnect()
+
+    def abandon_plot(self) -> None:
+        """A plot ended without giving the plotter back (a bug): forget the connection rather than stay
+        "plotting", so Step 1 finds the plotter again."""
+        if not self._lock.acquire(timeout=HANDOVER_WAIT_S):
+            logger.warning("Couldn't let go of the plotter after the plot: it's still busy")
+            return
+        try:
+            if self.state is MachineState.PLOTTING:
+                self._drop()
+        finally:
+            self._lock.release()
+
     # Any time.
 
     def request_stop(self) -> None:

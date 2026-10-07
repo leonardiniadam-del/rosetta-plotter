@@ -140,6 +140,28 @@ def test_a_legal_advanced_pen_up_never_hides_the_plotter_later(tmp_path):
     assert (machine["state"], machine["pen_down"]) == ("not_homed", 5)
 
 
+def test_another_plotter_needs_the_plot_prepared_again(tmp_path):
+    machine, bench, store = make_machine(tmp_path, _plotter())
+    api = Api(store, RecordingSink(), machine=machine)
+    ok(api.plotter_scan())
+    ok(api.plotter_set_home())
+    ok(api.artwork_import(_drawing(tmp_path)))
+    ok(api.plot_prepare())
+    bench.ebb.dead = True  # unplugged...
+    bench.ebb = None
+    assert ok(api.plotter_scan())["machine"]["state"] == "no_plotter"
+    bench.ebb = _plotter()  # ...and plugged back in: the prepared plot still fits it
+    ok(api.plotter_scan())
+    assert ok(api.plot_status())["plot"]["state"] == "ready"
+    bench.ebb.dead = True
+    bench.ebb = IFakeEBB(nickname="Big m5p1", move_sleep=0)  # a bigger plotter instead
+    assert ok(api.plotter_scan())["machine"]["model"] == 5
+    assert ok(api.plot_status())["plot"]["state"] == "idle"
+    ok(api.plot_prepare())
+    ok(api.plotter_identify(2, 1, "Big"))  # renamed as another model
+    assert ok(api.plot_status())["plot"]["state"] == "idle"
+
+
 def test_mark_this_corner_uses_the_pen_position(tmp_path):
     api, _sink = make_api(tmp_path, _plotter())
     ok(api.plotter_scan())

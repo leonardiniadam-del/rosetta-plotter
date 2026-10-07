@@ -252,6 +252,27 @@ def test_a_plotter_that_goes_quiet_after_a_plot_is_let_go(tmp_path, monkeypatch,
     assert machine.scan()["state"] == "not_homed"  # Step 1 finds it again
 
 
+def test_a_plot_that_ends_badly_lets_go_of_the_plotter(tmp_path):
+    machine, _ebb, _bench = _ready(tmp_path)
+    machine.abandon_plot()  # not plotting: nothing to let go of
+    assert machine.state is MachineState.READY
+    machine.release_for_plot()
+    machine.abandon_plot()
+    assert machine.state is MachineState.NO_PLOTTER
+    assert machine.scan()["state"] == "not_homed"
+
+
+def test_the_power_can_be_checked_mid_plot(tmp_path):
+    machine, ebb, bench = _ready(tmp_path)
+    machine.release_for_plot()
+    assert machine.power_ok_for_plot() is True
+    ebb.voltage = 0
+    assert machine.power_ok_for_plot() is False and machine.status()["power_ok"] is False
+    bench.ebb = None
+    assert machine.power_ok_for_plot() is None  # can't tell: the run itself says the plotter is gone
+    assert machine.state is MachineState.PLOTTING
+
+
 def _hold_the_lock_briefly(machine, seconds=0.2) -> threading.Thread:
     """Another thread holds the Machine's lock for a moment, as scan() does while it looks at the plotter."""
     holding = threading.Event()
