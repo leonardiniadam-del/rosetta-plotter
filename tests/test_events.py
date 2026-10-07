@@ -44,6 +44,26 @@ def test_waiting_progress_is_replaced_by_the_newest():
     assert '"fraction": 1.0' in sent[1] and '"done"' in sent[2]
 
 
+def test_progress_never_jumps_ahead_of_a_state_change():
+    sent, release = [], threading.Event()
+
+    def slow_page(script):
+        sent.append(script)
+        release.wait(5)
+
+    sink = WindowSink(slow_page)
+    sink.emit("plot_state", {"state": "plotting"})
+    _wait(lambda: len(sent) == 1)  # the page is busy with the first event
+    sink.emit("plot_progress", {"fraction": 0.5})
+    sink.emit("plot_state", {"state": "paused"})
+    sink.emit("plot_progress", {"fraction": 0.6})
+    sink.emit("plot_progress", {"fraction": 0.7})
+    release.set()
+    _wait(lambda: len(sent) == 4)
+    sink.close()
+    assert ['"fraction": 0.5' in sent[1], '"paused"' in sent[2], '"fraction": 0.7' in sent[3]] == [True] * 3
+
+
 def test_emit_never_waits_for_the_page():
     release = threading.Event()
     sink = WindowSink(lambda script: release.wait(5))

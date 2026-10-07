@@ -141,8 +141,8 @@ class Machine:
             if result is IdentityWrite.WRITTEN:
                 self._sleep(REBOOT_WAIT_S)
             elif result is not IdentityWrite.FAILED and port:
-                self._store.settings.old_firmware[port] = StoredIdentity(model, penlift, label)
-                self._store.save()
+                with self._store.change() as settings:
+                    settings.old_firmware[port] = StoredIdentity(model, penlift, label)
             else:
                 self._forget()
                 raise UserProblem(NAME_NOT_SAVED)

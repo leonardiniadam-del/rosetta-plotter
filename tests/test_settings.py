@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 
 from rosetta.app.settings import (
     PaperChoice, PenProfile, Settings, SettingsStore, StoredIdentity, app_folder,
@@ -27,6 +28,30 @@ def test_settings_survive_a_save_and_load(tmp_path):
     store.settings.old_firmware["COM7"] = StoredIdentity(3, 1, "Old one")
     store.save()
     assert SettingsStore(store.path).settings == store.settings
+
+
+def test_a_change_is_saved_when_it_is_done(tmp_path):
+    store = SettingsStore(tmp_path / "settings.json")
+    with store.change() as settings:
+        settings.units = "mm"
+    assert SettingsStore(store.path).settings.units == "mm"
+
+
+def test_changes_from_many_threads_are_saved_one_at_a_time(tmp_path, caplog):
+    store = SettingsStore(tmp_path / "settings.json")
+
+    def remember(thread):  # bridge calls each run on a thread of their own
+        for number in range(25):
+            with store.change() as settings:
+                settings.profiles[f"{thread}-{number}"] = PenProfile()
+
+    threads = [threading.Thread(target=remember, args=(thread,)) for thread in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(SettingsStore(store.path).settings.profiles) == 200
+    assert "Couldn't save" not in caplog.text
 
 
 def test_a_damaged_file_is_set_aside(tmp_path):

@@ -1,13 +1,16 @@
 """Per-laptop settings in %APPDATA%\\RosettaPlotter\\settings.json (spec §6.4).
 
 Loading never fails: a missing file gives the defaults, a damaged one is set aside as
-settings.json.bad, and a single bad value falls back to its own default.
+settings.json.bad, and a single bad value falls back to its own default. Change them with
+SettingsStore.change(), which saves them too.
 """
+import contextlib
 import dataclasses
 import json
 import logging
 import math
 import os
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -67,17 +70,27 @@ class Settings:
 class SettingsStore:
     def __init__(self, path: Path):
         self.path = Path(path)
+        self._lock = threading.RLock()  # bridge calls run on threads of their own
         self.settings = self._load()
+
+    @contextlib.contextmanager
+    def change(self):
+        """Change the settings, then save them, one change at a time:
+        `with store.change() as settings: settings.units = "mm"`. Nothing is saved if the change fails."""
+        with self._lock:
+            yield self.settings
+            self.save()
 
     def save(self) -> None:
         """Write atomically. A failure is logged, not raised: losing a preference mustn't stop a plot."""
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            scratch = self.path.with_name(self.path.name + ".tmp")
-            scratch.write_text(json.dumps(_to_json(self.settings), indent=2), encoding="utf-8")
-            os.replace(scratch, self.path)
-        except OSError:
-            logger.warning("Couldn't save settings to %s", self.path, exc_info=True)
+        with self._lock:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                scratch = self.path.with_name(self.path.name + ".tmp")
+                scratch.write_text(json.dumps(_to_json(self.settings), indent=2), encoding="utf-8")
+                os.replace(scratch, self.path)
+            except OSError:
+                logger.warning("Couldn't save settings to %s", self.path, exc_info=True)
 
     def _load(self) -> Settings:
         try:

@@ -2,7 +2,7 @@
 
 The page defines window.rosettaEvent(name, data). Sending never blocks the caller: a plot's progress
 callback runs on the engine's poller thread, and a slow page must not slow the plot (plan2-notes.md).
-While progress messages wait to be sent, only the newest is kept.
+While progress messages wait to be sent back to back, only the newest is kept.
 """
 import json
 import logging
@@ -42,12 +42,12 @@ class WindowSink:
             self._wake.notify()
 
     def emit(self, name: str, data: dict) -> None:
+        """Queue an event for the page. A progress event replaces one still waiting only if nothing was
+        queued after it, so progress never jumps ahead of (or behind) a plot_state change."""
         with self._wake:
-            if name in COALESCED:
-                for index, (waiting, _old) in enumerate(self._queue):
-                    if waiting == name:
-                        self._queue[index] = (name, data)
-                        return
+            if name in COALESCED and self._queue and self._queue[-1][0] == name:
+                self._queue[-1] = (name, data)
+                return
             self._queue.append((name, data))
             self._wake.notify()
 

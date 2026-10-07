@@ -83,9 +83,12 @@ class Api:
         self._sink.emit("files_dropped", {"paths": list(paths)})
 
     def _on_closing(self) -> bool:
-        """The window's closing event; True lets it close. Mid-plot the page is asked to confirm first
-        (spec §10), and its Quit button calls quit_confirmed()."""
-        if self._closing_allowed or not self._plot.busy():
+        """The window's closing event, on the window's own thread; True lets it close. Mid-plot the page
+        is asked to confirm first (spec §10), and its Quit button calls quit_confirmed(), which stops
+        everything before it closes the window, so nothing here has to wait."""
+        if self._closing_allowed:
+            return True
+        if not self._plot.busy():
             self._plot.shutdown()
             self._machine.shutdown()
             return True
@@ -132,23 +135,26 @@ class Api:
     def set_units(self, units):
         if units not in UNITS:
             raise ValueError(f"Unknown units: {units!r}")
-        self._store.settings.units = units
-        self._store.save()
+        with self._store.change() as settings:
+            settings.units = units
 
     @_bridge
     def set_advanced(self, values):
+        """Change some Advanced options; the others keep their values (the page sends only what changed)."""
         try:
-            advanced = advanced_from_dict(dict(values))
+            values = dict(values)
+            advanced_from_dict(values)  # checks each value given
         except (ValueError, TypeError) as problem:  # typed by the student, so the message is for them
             raise UserProblem(str(problem)) from problem
-        pen_down = self._machine.pen_down
-        if advanced.pen_up is not None and advanced.pen_up - pen_down < MIN_PEN_TRAVEL:
-            raise UserProblem(
-                f"Pen-up height must be at least {MIN_PEN_TRAVEL} above the pen-down height ({pen_down})."
-            )
-        self._machine.advanced = advanced
-        self._store.settings.advanced = advanced
-        self._store.save()
+        with self._store.change() as settings:
+            advanced = dataclasses.replace(settings.advanced, **values)
+            pen_down = self._machine.pen_down
+            if advanced.pen_up is not None and advanced.pen_up - pen_down < MIN_PEN_TRAVEL:
+                raise UserProblem(
+                    f"Pen-up height must be at least {MIN_PEN_TRAVEL} above the pen-down height ({pen_down})."
+                )
+            settings.advanced = advanced
+            self._machine.advanced = advanced
         self._plot.invalidate()
         return {"advanced": dataclasses.asdict(advanced)}
 
@@ -164,7 +170,10 @@ class Api:
 
     @_bridge
     def quit_confirmed(self):
-        """The student confirmed closing mid-plot: the closing event then pauses it and lifts the pen."""
+        """The student confirmed closing mid-plot: pause the plot (pen up), let go of the plotter, then
+        close the window. This runs on a bridge thread, so the wait doesn't freeze the window."""
+        self._plot.shutdown()
+        self._machine.shutdown()
         self._closing_allowed = True
         if self._window is not None:
             self._window.destroy()
@@ -220,8 +229,8 @@ class Api:
         status = self._machine.set_pen(pen_down, pen_type)
         key = self._machine.profile_key()
         if key:
-            self._store.settings.profiles[key] = PenProfile(pen_down, pen_type)
-            self._store.save()
+            with self._store.change() as settings:
+                settings.profiles[key] = PenProfile(pen_down, pen_type)
         self._plot.invalidate()
         return {"machine": status}
 
@@ -235,10 +244,8 @@ class Api:
             raise UserProblem("Place the paper's corner at the Home corner or farther from it.")
         self._session.material = Material(x, y, width, height)
         custom = size == CUSTOM
-        self._store.settings.paper = PaperChoice(
-            size, orientation, width if custom else None, height if custom else None
-        )
-        self._store.save()
+        with self._store.change() as settings:
+            settings.paper = PaperChoice(size, orientation, width if custom else None, height if custom else None)
         self._plot.invalidate()
         return {"material": self._material()}
 
@@ -258,8 +265,8 @@ class Api:
         if not 0 <= margin <= MAX_MARGIN_MM:
             raise UserProblem(f"The margin must be from 0 to {MAX_MARGIN_MM:g} mm.")
         self._session.margin_mm = margin
-        self._store.settings.margin_mm = margin
-        self._store.save()
+        with self._store.change() as settings:
+            settings.margin_mm = margin
         return {"margin_mm": margin}
 
     # Step 3: artwork.

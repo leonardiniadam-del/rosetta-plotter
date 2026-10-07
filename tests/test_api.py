@@ -83,6 +83,14 @@ def test_settings_are_remembered(tmp_path):
     assert (saved.units, saved.paper.size, saved.paper.orientation, saved.advanced.accel) == ("mm", "a4", "portrait", 60)
 
 
+def test_advanced_changes_keep_the_other_options(tmp_path):
+    api, _sink = make_api(tmp_path)
+    ok(api.set_advanced({"accel": 60}))
+    advanced = ok(api.set_advanced({"hiding": True}))["advanced"]  # the page sends only what changed
+    assert (advanced["accel"], advanced["hiding"]) == (60, True)
+    assert SettingsStore(tmp_path / "settings.json").settings.advanced.accel == 60
+
+
 def test_a_custom_paper_must_be_a_real_size(tmp_path):
     reply = make_api(tmp_path)[0].material_set("custom", "landscape", 0, 100)
     assert not reply["ok"] and "between 0 and 2000 mm" in reply["message"]
@@ -192,6 +200,30 @@ def test_closing_mid_plot_asks_the_page_first(tmp_path):
     api._attach_window(SimpleNamespace(destroy=lambda: destroyed.append(True)), choose_files=None)
     ok(api.quit_confirmed())
     assert destroyed and api._on_closing() is True
+
+
+def test_quitting_mid_plot_pauses_it_before_the_window_closes(tmp_path, monkeypatch):
+    machine, _bench, store = make_machine(tmp_path, _plotter())
+    run_ebb = FakeEBB(move_sleep=0.01)
+    runner = PlotRunner(factory=fake_factory(run_ebb), poll_interval=0.001)
+    api = Api(store, RecordingSink(), machine=machine, runner_factory=lambda: runner)
+    ok(api.plotter_scan())
+    ok(api.plotter_set_home())
+    ok(api.artwork_import(_drawing(tmp_path)))
+    ok(api.plot_prepare())
+    ok(api.plot_start())
+    ok(api.plot_continue())
+    wait_for(lambda: run_ebb.sm > 3)
+    seen = []
+
+    def destroy():
+        seen.append((api.plot_status()["plot"]["state"], machine.state.value))
+
+    api._attach_window(SimpleNamespace(destroy=destroy), choose_files=None)
+    ok(api.quit_confirmed())  # a bridge thread: the slow part happens here, not on the window's thread
+    assert seen == [("paused", "no_plotter")]
+    monkeypatch.setattr(machine, "shutdown", lambda: pytest.fail("the closing event waited again"))
+    assert api._on_closing() is True
 
 
 def test_dropped_files_reach_the_page(tmp_path):
