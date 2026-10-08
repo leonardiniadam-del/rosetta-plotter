@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import "./plate";
 import { JOB_MIME } from "../canvas/interaction";
-import { mount, settle, shadow, startApp } from "../test/setup";
+import { mount, readyToPlot, settle, shadow, startApp } from "../test/setup";
 import type { RpPlate } from "./plate";
 
 async function plateWithJob() {
@@ -230,5 +230,19 @@ describe("rp-plate", () => {
     await settle();
     expect(fake.called("plotter_goto")).toEqual([]);
     expect(app.state.notice?.message).toMatch(/^Home not set/);
+  });
+
+  it("while plotting, follows the pen and darkens what's drawn", async () => {
+    const { app, fake } = await readyToPlot();
+    await app.setPenVisible("#ff0000", false);
+    await settle();
+    await settle();
+    await app.startPlot();
+    fake.progress(0.5);
+    const plate = await mount<HTMLElement & { updateComplete: Promise<unknown> }>("rp-plate");
+    await plate.updateComplete;
+    const root = shadow(plate);
+    expect(root.querySelector("path.drawn")?.getAttribute("d")).toMatch(/^M/);
+    expect(root.querySelector("rect.cross-box")).not.toBeNull();
   });
 });

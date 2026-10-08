@@ -8,10 +8,11 @@ import type { ViewRequest } from "../app/app";
 import type { PieceInfo, PlacementData } from "../bridge/contract";
 import { angleAt, GRID, gridLines, handleAt, hitPiece, JOB_MIME, linesToPath, marqueeHits, rectFrom, snapAngle, type IdBox } from "../canvas/interaction";
 import { fitCamera, panBy, toMachine, toScreen, zoomAt, type Camera, type Size } from "../geometry/camera";
+import { routeOf, routePath } from "../geometry/route";
 import { pieceMatrix, rotateAboutCenter, scaleFromHandle, type Box, type Handle, type Point } from "../geometry/placement";
 import { disabledReason } from "../state/reasons";
 import { jobOf, pieceBoxOnPaper, plotRunning, reachOf } from "../state/selectors";
-import type { Tool } from "../state/store";
+import { StoreController, type Tool } from "../state/store";
 import { AppElement } from "./base";
 import { controls } from "./styles";
 
@@ -144,6 +145,13 @@ export class RpPlate extends AppElement {
         stroke: var(--pen-cross);
         stroke-width: 1px;
       }
+      .drawn {
+        fill: none;
+        stroke-width: 2.5px;
+        vector-effect: non-scaling-stroke;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
     `,
   ];
 
@@ -154,6 +162,12 @@ export class RpPlate extends AppElement {
   private fitted = false;
   private observer: ResizeObserver | null = null;
   private readonly paths = new Map<string, string>();
+
+  constructor() {
+    super();
+    // The pen's live position arrives about 10 times a second, in its own store.
+    new StoreController(this, this.app.progress);
+  }
 
   /** The current camera (for tests and the status bar's future use). */
   get view(): Camera {
@@ -485,6 +499,7 @@ export class RpPlate extends AppElement {
         ${this.axes(reach)}
         <g mask="url(#off-paper)">${repeat(s.pieces, (p) => p.id, (piece) => this.piece(piece, "off"))}</g>
         <g clip-path="url(#printable)">${repeat(s.pieces, (p) => p.id, (piece) => this.piece(piece, "ink"))}</g>
+        ${this.drawnSoFar()}
       </g>
       ${this.selection()} ${this.crosshair()} ${this.marquee()}
     </svg>`;
@@ -572,8 +587,24 @@ export class RpPlate extends AppElement {
       : nothing}`;
   }
 
+  /** While plotting: the lines already drawn, darker (spec §4.4). */
+  private drawnSoFar() {
+    const s = this.s;
+    const progress = this.app.progress.state.value;
+    if (!s.summary || !progress || !plotRunning(s)) return nothing;
+    const route = routeOf(s.summary);
+    const current = s.summary.layers[progress.layer];
+    if (!current) return nothing;
+    const until = route.layerStarts[progress.layer] + current.seconds * progress.fraction;
+    return s.summary.layers.slice(0, progress.layer + 1).map(
+      (layer, index) =>
+        svg`<path class="drawn" d=${routePath(route, index, true, index < progress.layer ? Infinity : until)} style=${`stroke: ${inkColor(layer.color)}`} />`,
+    );
+  }
+
   private crosshair() {
-    const position = this.s.machine.position;
+    const live = this.app.progress.state.value;
+    const position = plotRunning(this.s) && live ? ([live.x, live.y] as Point) : this.s.machine.position;
     if (!position) return nothing;
     const [cx, cy] = toScreen(this.camera, position);
     const r = CROSS_PX + 6;

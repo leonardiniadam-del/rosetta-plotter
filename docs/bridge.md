@@ -116,6 +116,7 @@ There's no Stop while plotting. The page's Stop is: `plot_pause()`, wait for the
 - **summary**:
   - `layers` [{layer, color, name, seconds, pendown_mm, path}]
   - `path` is a list of runs [{down, points}], with `points` flattened as [x, y, t, x, y, t, …]. Here t is seconds from the start of that pen's run.
+  - `path` points and `plot_progress` x, y are machine mm from Home, the same frame as `material`.
   - also: `total_seconds`, `ink_bbox`, `warnings`
 
 ## Events
