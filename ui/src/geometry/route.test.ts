@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PlotSummary } from "../bridge/contract";
-import { pointAt, routeOf, routePath } from "./route";
+import { pointAt, routeOf, routePath, timeAtPendown } from "./route";
 
 const summary: PlotSummary = {
   layers: [
@@ -40,5 +40,22 @@ describe("route", () => {
     expect(routePath(route, 0, true, 1.5)).toBe("M10 0L10 5");
     expect(routePath(route, 0, false)).toBe("M0 0L10 0");
     expect(routePath(route, 1, true, 2)).toBe("");
+  });
+  it("finds the time a pen has drawn a distance, whatever the pen-up travel before it", () => {
+    const route = routeOf(summary);
+    // Black: a 1 s pen-up move, then 10 mm drawn in the next second.
+    expect(timeAtPendown(route, 0, 0)).toBe(1);
+    expect(timeAtPendown(route, 0, 5)).toBe(1.5);
+    expect(timeAtPendown(route, 0, 10)).toBe(2);
+    expect(timeAtPendown(route, 0, 99)).toBe(2);
+    // Red starts at 2 s on the whole timeline.
+    expect(timeAtPendown(route, 1, 2.5)).toBe(2.5);
+    expect(routePath(route, 0, true, timeAtPendown(route, 0, 0))).toBe("");
+  });
+
+  it("builds a pen's whole path once", () => {
+    const route = routeOf(summary);
+    expect(routePath(route, 0, true)).toBe(routePath(route, 0, true));
+    expect(routePath(route, 1, false)).toBe("");
   });
 });

@@ -8,7 +8,7 @@ import type { ViewRequest } from "../app/app";
 import type { PieceInfo, PlacementData } from "../bridge/contract";
 import { angleAt, GRID, gridLines, handleAt, hitPiece, JOB_MIME, linesToPath, marqueeHits, rectFrom, snapAngle, type IdBox } from "../canvas/interaction";
 import { fitCamera, panBy, toMachine, toScreen, zoomAt, type Camera, type Size } from "../geometry/camera";
-import { pointAt, routeOf, routePath } from "../geometry/route";
+import { pointAt, routeOf, routePath, timeAtPendown } from "../geometry/route";
 import { pieceMatrix, rotateAboutCenter, scaleFromHandle, type Box, type Handle, type Point } from "../geometry/placement";
 import { disabledReason } from "../state/reasons";
 import { jobOf, pieceBoxOnPaper, plotRunning, reachOf } from "../state/selectors";
@@ -617,7 +617,8 @@ export class RpPlate extends AppElement {
     const route = routeOf(s.summary);
     const current = s.summary.layers[progress.layer];
     if (!current) return nothing;
-    const until = route.layerStarts[progress.layer] + current.seconds * progress.fraction;
+    // Python reports the pen-down distance in this pen, so the dark line stays with the crosshair through pen-up travel.
+    const until = timeAtPendown(route, progress.layer, progress.pendown_mm);
     return s.summary.layers.slice(0, progress.layer + 1).map(
       (layer, index) =>
         svg`<path class="drawn" d=${routePath(route, index, true, index < progress.layer ? Infinity : until)} style=${`stroke: ${inkColor(layer.color)}`} />`,

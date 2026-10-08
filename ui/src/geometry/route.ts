@@ -15,10 +15,15 @@ export interface Segment {
   x1: number;
   y1: number;
   t1: number;
+  /** The pen's pen-down distance in mm (within its own pen) at the start and the end of this move. */
+  d0: number;
+  d1: number;
 }
 
 export interface Route {
   segments: Segment[];
+  /** The same segments, grouped by pen, in order. */
+  byLayer: Segment[][];
   total: number;
   /** When each pen starts, in seconds from the start of the plot. */
   layerStarts: number[];
@@ -30,21 +35,29 @@ export function routeOf(summary: PlotSummary): Route {
   const known = cache.get(summary);
   if (known) return known;
   const segments: Segment[] = [];
+  const byLayer: Segment[][] = [];
   const layerStarts: number[] = [];
   let offset = 0;
   summary.layers.forEach((layer, index) => {
     layerStarts.push(offset);
     let end = 0;
+    let drawn = 0;
+    const own: Segment[] = [];
+    byLayer.push(own);
     for (const run of layer.path) {
       const p = run.points;
       for (let i = 0; i + 5 < p.length; i += 3) {
-        segments.push({ layer: index, down: run.down, x0: p[i], y0: p[i + 1], t0: offset + p[i + 2], x1: p[i + 3], y1: p[i + 4], t1: offset + p[i + 5] });
+        const d0 = drawn;
+        if (run.down) drawn += Math.hypot(p[i + 3] - p[i], p[i + 4] - p[i + 1]);
+        const seg = { layer: index, down: run.down, x0: p[i], y0: p[i + 1], t0: offset + p[i + 2], x1: p[i + 3], y1: p[i + 4], t1: offset + p[i + 5], d0, d1: drawn };
+        segments.push(seg);
+        own.push(seg);
         end = Math.max(end, p[i + 5]);
       }
     }
     offset += Math.max(layer.seconds, end);
   });
-  const route = { segments, total: offset, layerStarts };
+  const route = { segments, byLayer, total: offset, layerStarts };
   cache.set(summary, route);
   return route;
 }
@@ -70,12 +83,42 @@ export function pointAt(route: Route, t: number): Point | null {
   return along(s[lo], t);
 }
 
-/** An SVG path of one pen's pen-down (or pen-up) moves, up to time `until`. */
+/** The time at which a pen has drawn `mm` of pen-down distance (past its end: when it last drew). */
+export function timeAtPendown(route: Route, layer: number, mm: number): number {
+  const own = route.byLayer[layer];
+  if (!own) return 0;
+  let last: Segment | null = null;
+  for (const seg of own) {
+    if (!seg.down) continue;
+    if (seg.d1 >= mm) {
+      if (mm <= seg.d0 || seg.d1 <= seg.d0) return seg.t0;
+      return seg.t0 + ((mm - seg.d0) / (seg.d1 - seg.d0)) * (seg.t1 - seg.t0);
+    }
+    last = seg;
+  }
+  return last ? last.t1 : route.layerStarts[layer];
+}
+
+const wholePaths = new WeakMap<Route, Map<string, string>>();
+
+/** An SVG path of one pen's pen-down (or pen-up) moves, up to time `until`. The whole path is built once. */
 export function routePath(route: Route, layer: number, down: boolean, until = Infinity): string {
+  if (until === Infinity) {
+    let known = wholePaths.get(route);
+    if (!known) wholePaths.set(route, (known = new Map()));
+    const key = `${layer}|${down}`;
+    let d = known.get(key);
+    if (d === undefined) known.set(key, (d = build(route, layer, down, until)));
+    return d;
+  }
+  return build(route, layer, down, until);
+}
+
+function build(route: Route, layer: number, down: boolean, until: number): string {
   const parts: string[] = [];
   let last: Point | null = null;
-  for (const seg of route.segments) {
-    if (seg.layer !== layer || seg.down !== down || seg.t0 >= until) continue;
+  for (const seg of route.byLayer[layer] ?? []) {
+    if (seg.down !== down || seg.t0 >= until) continue;
     const end = along(seg, until);
     if (!last || last[0] !== seg.x0 || last[1] !== seg.y0) parts.push(`M${seg.x0} ${seg.y0}`);
     parts.push(`L${end[0]} ${end[1]}`);
