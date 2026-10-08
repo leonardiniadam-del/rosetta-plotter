@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { App } from "./app";
 import { Client } from "../bridge/client";
 import type { PlotStatus } from "../bridge/contract";
@@ -203,6 +203,7 @@ describe("plotting", () => {
     expect(app.state.plot.state).toBe("ready");
     // Cancelled away from Home (as plotjob.py does): the pen's place is unknown, so Home must be set again.
     expect(app.state.notice?.message).toBe("Plot cancelled. Slide the pen Home before the next plot.");
+    expect(app.state.notice?.kind).toBe("warning"); // stays until the student has read it
     expect(app.state.machine.state).toBe("not_homed");
   });
 
@@ -267,7 +268,100 @@ describe("plotting", () => {
     expect(app.state.dialog).toMatchObject({ kind: "confirm", title: "Stop the plot and close Rosetta Plotter?", confirm: "Stop and close" });
     const dialog = app.state.dialog;
     if (dialog?.kind === "confirm") dialog.run();
+    expect(app.state.notice).toMatchObject({ message: "Lifting the pen and closing…", keep: true });
+    expect(app.state.notice?.actions).toBeUndefined();
     await settle();
     expect(fake.called("quit_confirmed")).toHaveLength(1);
+  });
+
+  it("a refused recovery step keeps its buttons, with the reason", async () => {
+    const { app, fake } = await readyToPlot();
+    await app.setPenVisible("#ff0000", false);
+    await settle();
+    await settle();
+    await app.startPlot();
+    fake.disconnect();
+    fake.plot_reconnect = async () => ({ ok: false, message: "Still no plotter found.", details: "USB error 5" });
+    app.state.notice?.actions?.[0].run();
+    await settle();
+    expect(app.state.plot.state).toBe("reconnect");
+    expect(app.state.notice).toMatchObject({ kind: "warning", message: "Still no plotter found.", details: "USB error 5", source: "plot" });
+    expect(app.state.notice?.actions?.map((a) => a.label)).toEqual(["Continue", "Cancel plot"]);
+  });
+
+  it("Stop cancels at a pen change when the pen finishes as the pause arrives", async () => {
+    const { app, fake } = await readyToPlot();
+    await app.startPlot();
+    await app.plotAction("continue");
+    const pause = fake.plot_pause.bind(fake);
+    fake.plot_pause = async () => {
+      fake.finishLayer(); // now asking for the red pen
+      return pause();
+    };
+    app.stopPlot();
+    const dialog = app.state.dialog;
+    if (dialog?.kind === "confirm") dialog.run();
+    await settle();
+    await settle();
+    expect(fake.called("plot_cancel")).toHaveLength(1);
+    expect(app.state.plot.state).toBe("ready");
+    expect(app.state.notice?.message).toBe("Plot cancelled.");
+  });
+
+  it("Stop cancels when the cable is pulled while pausing", async () => {
+    const { app, fake } = await readyToPlot();
+    await app.setPenVisible("#ff0000", false);
+    await settle();
+    await settle();
+    await app.startPlot();
+    const pause = fake.plot_pause.bind(fake);
+    fake.plot_pause = async () => {
+      const reply = await pause(); // "pausing"
+      fake.disconnect(); // the event overtakes the reply
+      return reply;
+    };
+    app.stopPlot();
+    const dialog = app.state.dialog;
+    if (dialog?.kind === "confirm") dialog.run();
+    await settle();
+    await settle();
+    expect(fake.called("plot_cancel")).toHaveLength(1);
+    expect(app.state.plot.state).toBe("ready");
+    expect(app.state.notice?.message).toBe("Plot cancelled. Slide the pen Home before the next plot.");
+  });
+
+  it("a reply older than the newest plot_state event doesn't undo it", async () => {
+    const { app, fake } = await readyToPlot();
+    const start = fake.plot_start.bind(fake);
+    fake.plot_start = async () => {
+      const reply = await start(); // "load_pen"
+      if (reply.ok) {
+        fake.emit("plot_state", { ...reply.plot, state: "not_connected", actions: ["retry", "cancel"], message: "Lost the plotter." });
+      }
+      return reply;
+    };
+    await app.startPlot();
+    expect(app.state.plot.state).toBe("not_connected");
+    expect(app.state.notice?.actions?.map((a) => a.label)).toEqual(["Retry", "Cancel plot"]);
+  });
+});
+
+describe("notices", () => {
+  it("only info notices without buttons close by themselves", async () => {
+    const { app } = await startApp();
+    vi.useFakeTimers();
+    try {
+      app.notify({ kind: "info", message: "Done! The pen is back Home.", actions: [{ label: "Plot another copy", run: () => {} }] });
+      vi.advanceTimersByTime(60_000);
+      expect(app.state.notice?.message).toBe("Done! The pen is back Home.");
+      app.notify({ kind: "info", message: "Lifting the pen and closing…", keep: true });
+      vi.advanceTimersByTime(60_000);
+      expect(app.state.notice?.message).toBe("Lifting the pen and closing…");
+      app.notify({ kind: "info", message: "Saved." });
+      vi.advanceTimersByTime(60_000);
+      expect(app.state.notice).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

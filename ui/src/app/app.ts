@@ -39,6 +39,10 @@ const ACTION_METHODS = {
 export type PlotAction = keyof typeof ACTION_METHODS;
 /** How long Stop waits for the plot to pause before it gives up. */
 const STOP_WAIT_MS = 60_000;
+/** The plot states Python's cancel() accepts (plotjob.PlotController.cancel). */
+const CANCELLABLE = ["load_pen", "paused", "paused_at_home", "reconnect", "slide_home", "not_connected"];
+/** The end of a plot's message when the pen isn't known to be Home (plotjob.HOME_UNKNOWN). */
+const HOME_UNKNOWN = "Slide the pen Home before the next plot.";
 
 export type ViewRequest = { kind: "fit-paper" } | { kind: "fit-reach" } | { kind: "zoom"; factor: number };
 
@@ -50,6 +54,13 @@ export interface AppOptions {
 }
 
 const DEFAULTS: AppOptions = { colorsDelayMs: 300, prepareDelayMs: 800, scanIntervalMs: 2000 };
+
+/** What to tell the student about a failed call. */
+function problemOf(error: unknown): { message: string; details: string } {
+  if (error instanceof BridgeError) return { message: error.message, details: error.details };
+  const details = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  return { message: "Something unexpected went wrong in the window.", details };
+}
 
 function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
@@ -70,6 +81,8 @@ export class App {
   private colorsTimer: ReturnType<typeof setTimeout> | null = null;
   private noticeTimer: ReturnType<typeof setTimeout> | null = null;
   private prepareTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Counts plot_state events: a reply sent before the newest one has an older picture of the plot. */
+  private plotEvents = 0;
   /** Counts the times the plot went out of date; a prepare reply from an older count is dropped. */
   private prepareGeneration = 0;
   /** A prepare was due while another was running. */
@@ -132,6 +145,7 @@ export class App {
 
   onEvent(name: string, data: unknown): void {
     if (name === "plot_state") {
+      this.plotEvents += 1;
       this.onPlotState(data as PlotStatus);
     } else if (name === "plot_progress") {
       this.progress.update({ value: data as PlotProgress });
@@ -149,7 +163,7 @@ export class App {
     if (this.noticeTimer) clearTimeout(this.noticeTimer);
     this.noticeTimer = null;
     this.store.update({ notice });
-    if (notice.kind === "info") this.noticeTimer = setTimeout(() => this.dismissNotice(), INFO_MS);
+    if (notice.kind === "info" && !notice.actions?.length && !notice.keep) this.noticeTimer = setTimeout(() => this.dismissNotice(), INFO_MS);
   }
 
   dismissNotice(): void {
@@ -157,12 +171,7 @@ export class App {
   }
 
   fail(error: unknown): void {
-    if (error instanceof BridgeError) {
-      this.notify({ kind: "error", message: error.message, details: error.details });
-    } else {
-      const details = error instanceof Error ? (error.stack ?? error.message) : String(error);
-      this.notify({ kind: "error", message: "Something unexpected went wrong in the window.", details });
-    }
+    this.notify({ kind: "error", ...problemOf(error) });
   }
 
   /** Say why a greyed-out control can't work yet. */
@@ -794,10 +803,11 @@ export class App {
 
   /** Ask Python where the plot and the plotter are (after a refused call, or when a plot ends). */
   async refreshPlot(): Promise<void> {
+    const seen = this.plotEvents;
     try {
       const reply = await this.client.call("plot_status");
       this.setMachine(reply.machine);
-      if (reply.plot.state !== this.state.plot.state) this.onPlotState(reply.plot);
+      if (seen === this.plotEvents && reply.plot.state !== this.state.plot.state) this.onPlotState(reply.plot);
     } catch {
       await this.scan();
     }
@@ -805,16 +815,9 @@ export class App {
 
   /** The strip for plot states that need the student (spec §4.4), and the result when a plot ends. */
   private showPlotNotice(plot: PlotStatus, before: string): void {
-    const run = (action: PlotAction) => () => void this.plotAction(action);
-    const cancel = { label: "Cancel plot", run: run("cancel") };
-    const needs: Record<string, Notice> = {
-      reconnect: { kind: "warning", message: plot.message, details: plot.details, actions: [{ label: "Continue", run: run("reconnect") }, cancel] },
-      slide_home: { kind: "warning", message: plot.message, actions: [{ label: "It's in the corner", run: run("rehomed") }, cancel] },
-      not_connected: { kind: "error", message: plot.message, details: plot.details, actions: [{ label: "Retry", run: run("retry") }, cancel] },
-    };
-    const notice = needs[plot.state];
+    const notice = this.recoveryNotice(plot.state, plot.message, plot.details);
     if (notice) {
-      this.notify({ ...notice, source: "plot" });
+      this.notify(notice);
       return;
     }
     if (this.state.notice?.source === "plot") this.dismissNotice();
@@ -827,8 +830,27 @@ export class App {
         actions: [{ label: "Plot another copy", run: () => void this.startPlot() }],
       });
     } else if (AT_REST.includes(plot.state) && !AT_REST.includes(before) && plot.message) {
-      this.notify({ kind: plot.details ? "error" : "info", source: "plot", message: plot.message, details: plot.details || undefined });
+      const kind = plot.details ? "error" : plot.message.includes(HOME_UNKNOWN) ? "warning" : "info";
+      this.notify({ kind, source: "plot", message: plot.message, details: plot.details || undefined });
     }
+  }
+
+  /** The strip's recovery buttons for a plot state that needs the student, or null for other states. */
+  private recoveryNotice(state: string, message: string, details: string): Notice | null {
+    const run = (action: PlotAction) => () => void this.plotAction(action);
+    const recoveries: Record<string, [Notice["kind"], string, PlotAction]> = {
+      reconnect: ["warning", "Continue", "reconnect"],
+      slide_home: ["warning", "It's in the corner", "rehomed"],
+      not_connected: ["error", "Retry", "retry"],
+    };
+    const recovery = recoveries[state];
+    if (!recovery) return null;
+    const [kind, label, action] = recovery;
+    const actions = [
+      { label, run: run(action) },
+      { label: "Cancel plot", run: run("cancel") },
+    ];
+    return { kind, source: "plot", message, details: details || undefined, actions };
   }
 
   // Plotting (spec §4.4).
@@ -836,14 +858,20 @@ export class App {
   /** One of plot.actions. Pause never waits behind another plotter request; the rest take their turn. */
   async plotAction(action: PlotAction): Promise<boolean> {
     const method = ACTION_METHODS[action];
+    const seen = this.plotEvents;
     try {
       const reply = action === "pause" ? await this.client.call(method) : await this.client.hardware(method);
       this.setMachine(reply.machine);
-      if (reply.plot.state !== this.state.plot.state) this.onPlotState(reply.plot);
+      // A plot_state event that came while waiting is newer than the reply's picture of the plot.
+      if (seen === this.plotEvents && reply.plot.state !== this.state.plot.state) this.onPlotState(reply.plot);
       return true;
     } catch (error) {
       this.fail(error);
       await this.refreshPlot();
+      // A refused recovery step: its buttons stay, with the reason in place of the plot's message.
+      const problem = problemOf(error);
+      const notice = this.recoveryNotice(this.state.plot.state, problem.message, problem.details);
+      if (notice) this.notify(notice);
       return false;
     }
   }
@@ -881,12 +909,17 @@ export class App {
   private async pauseThenCancel(): Promise<void> {
     this.closeDialog();
     if (!(await this.plotAction("pause"))) return;
+    let state: string;
     try {
-      const state = await this.waitForPlot(["paused", "paused_at_home", ...AT_REST], STOP_WAIT_MS);
-      if (state === "paused" || state === "paused_at_home") await this.plotAction("cancel");
+      // Paused, or anywhere else Python can cancel from: a pen change (the pen finished as the pause came),
+      // or a recovery state (the cable was pulled while pausing). At rest, there's nothing left to stop.
+      state = await this.waitForPlot([...CANCELLABLE, ...AT_REST], STOP_WAIT_MS);
     } catch (error) {
+      // Only reached while still plotting, pausing or homing: no other strip or dialog is showing.
       this.fail(error);
+      return;
     }
+    if (CANCELLABLE.includes(state)) await this.plotAction("cancel");
   }
 
   /** Resolves with the plot's state once it's one of `states`; fails after `ms`. */
@@ -924,6 +957,8 @@ export class App {
         cancel: "Keep plotting",
         run: () => {
           this.closeDialog();
+          // quit_confirmed pauses the plot first, and its reply may never come (the window closes).
+          this.notify({ kind: "info", message: "Lifting the pen and closing…", keep: true });
           void this.exit();
         },
       },

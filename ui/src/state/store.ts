@@ -29,6 +29,8 @@ export interface Notice {
   actions?: NoticeAction[];
   /** Notices the plot puts up, which it takes down again. */
   source?: "plot";
+  /** Stays until replaced (an info notice without buttons otherwise closes itself after a few seconds). */
+  keep?: boolean;
 }
 
 export type Dialog =
