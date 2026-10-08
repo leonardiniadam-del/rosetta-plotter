@@ -22,13 +22,21 @@ export class RpControlbar extends AppElement {
       :host {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         padding: 0 10px;
         overflow: hidden;
         position: relative;
       }
-      .spacer {
-        flex: 1;
+      .left {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: thin;
+        white-space: nowrap;
       }
       .progress {
         position: absolute;
@@ -38,7 +46,7 @@ export class RpControlbar extends AppElement {
         background: var(--accent);
       }
       .name {
-        max-width: 180px;
+        max-width: 140px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -71,7 +79,7 @@ export class RpControlbar extends AppElement {
     const s = this.s;
     const left = s.selection.length > 0 ? this.drawingControls() : this.paperControls();
     const fraction = plotRunning(s) && s.summary ? overallFraction(s.summary.total_seconds, this.app.progress.state.value) : 0;
-    return html`${left}<span class="spacer"></span><rp-plotbar></rp-plotbar>${fraction > 0
+    return html`<div class="left">${left}</div><rp-plotbar></rp-plotbar>${fraction > 0
         ? html`<div class="progress" style=${`width: ${(fraction * 100).toFixed(1)}%`}></div>`
         : nothing}`;
   }

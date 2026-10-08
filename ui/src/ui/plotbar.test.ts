@@ -49,6 +49,40 @@ describe("plot bar", () => {
     expect(labels).toEqual(["Resume", "Return Home", "Cancel plot"]);
   });
 
+  it("Cancel plot asks first, then cancels", async () => {
+    const { app, fake } = await readyToPlot();
+    await app.setPenVisible("#ff0000", false);
+    await settle();
+    await settle();
+    await app.startPlot();
+    await app.plotAction("pause");
+    await settle();
+    const root = shadow(await mount<Lit>("rp-plotbar"));
+    button(root, "Cancel plot").click();
+    expect(app.state.dialog).toMatchObject({
+      kind: "confirm",
+      title: "Cancel the plot?",
+      message: "This plot can't be resumed.",
+      confirm: "Cancel plot",
+      cancel: "Keep plot",
+    });
+    expect(fake.called("plot_cancel")).toHaveLength(0);
+    const dialog = app.state.dialog as { run: () => void };
+    dialog.run();
+    await settle();
+    expect(app.state.dialog).toBeNull();
+    expect(fake.called("plot_cancel")).toHaveLength(1);
+  });
+
+  it("the warnings chip is readable by a screen reader", async () => {
+    const { app } = await readyToPlot();
+    app.store.update((s) => ({ summary: s.summary && { ...s.summary, warnings: ["Part of the drawing is off the paper."] } }));
+    const root = shadow(await mount<Lit>("rp-plotbar"));
+    const warn = root.querySelector(".warn");
+    expect(warn?.getAttribute("role")).toBe("img");
+    expect(warn?.getAttribute("aria-label")).toBe("Part of the drawing is off the paper.");
+  });
+
   it("shows time left while plotting", async () => {
     const { app, fake } = await readyToPlot();
     await app.setPenVisible("#ff0000", false);
@@ -91,6 +125,19 @@ describe("control bar while plotting", () => {
     expect(width.hasAttribute("disabled")).toBe(true);
     expect(root.querySelector("rp-plotbar")).not.toBeNull();
     expect(root.querySelector(".progress")).not.toBeNull();
+  });
+
+  it("keeps the plot buttons outside the scrolling left controls", async () => {
+    // jsdom can't measure layout, so this checks the structure the CSS relies on: the left controls scroll
+    // in their own container and the plot bar is its sibling, so Start/Pause/Stop can't be clipped.
+    await readyToPlot();
+    const bar = await mount<Lit>("rp-controlbar");
+    const root = shadow(bar);
+    const children = Array.from(root.children).filter((c) => c.tagName !== "STYLE");
+    expect(children.map((c) => c.className || c.tagName.toLowerCase())).toEqual(["left", "rp-plotbar"]);
+    const css = (bar.constructor as unknown as { styles: Array<{ cssText: string }> }).styles.map((x) => x.cssText).join("");
+    expect(css).toMatch(/\.left\s*\{[^}]*overflow-x:\s*auto/);
+    expect(css).toMatch(/\.left\s*\{[^}]*min-width:\s*0/);
   });
 
   it("shows no progress line when nothing is plotting", async () => {

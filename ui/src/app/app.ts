@@ -906,6 +906,23 @@ export class App {
     });
   }
 
+  /** Cancel plot from the plot bar (paused): asks first, like Stop, since the plot can't be resumed. */
+  cancelPlot(): void {
+    this.store.update({
+      dialog: {
+        kind: "confirm",
+        title: "Cancel the plot?",
+        message: "This plot can't be resumed.",
+        confirm: "Cancel plot",
+        cancel: "Keep plot",
+        run: () => {
+          this.closeDialog();
+          void this.plotAction("cancel");
+        },
+      },
+    });
+  }
+
   private async pauseThenCancel(): Promise<void> {
     this.closeDialog();
     if (!(await this.plotAction("pause"))) return;

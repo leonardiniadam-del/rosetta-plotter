@@ -31,6 +31,7 @@ export class RpPlotbar extends AppElement {
         align-items: center;
         gap: 6px;
         white-space: nowrap;
+        flex: none;
       }
       .chip {
         display: inline-flex;
@@ -42,6 +43,9 @@ export class RpPlotbar extends AppElement {
         width: 9px;
         height: 9px;
         border-radius: 2px;
+      }
+      .warn {
+        color: var(--warning);
       }
       .total {
         margin: 0 6px 0 2px;
@@ -65,7 +69,7 @@ export class RpPlotbar extends AppElement {
       return [
         { label: "Resume", iconName: "play", primary: true, reason: null, run: () => void app.plotAction("resume") },
         ...(state === "paused" ? [{ label: "Return Home", iconName: "home" as IconName, reason: null, run: () => void app.plotAction("home") }] : []),
-        { label: "Cancel plot", reason: null, run: () => void app.plotAction("cancel") },
+        { label: "Cancel plot", reason: null, run: () => app.cancelPlot() },
       ];
     }
     const waiting = WAITING[state] ?? null;
@@ -94,7 +98,7 @@ export class RpPlotbar extends AppElement {
         ? `${formatDuration(progress.seconds_left)} left`
         : `Total ${formatDuration(s.summary.total_seconds)}`;
     return html`${chips}<span class="total" title=${warnings}>${total}</span>${warnings
-        ? html`<span class="chip" title=${warnings}>${icon("alert")}</span>`
+        ? html`<span class="chip warn" role="img" aria-label=${warnings} title=${warnings}>${icon("alert")}</span>`
         : nothing}`;
   }
 
