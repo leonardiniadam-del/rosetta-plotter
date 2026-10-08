@@ -1,5 +1,6 @@
 /** Keyboard shortcuts (Help › Keyboard shortcuts lists them; see app/shortcut-help.ts). */
 import type { App } from "./app/app";
+import { modalOpen } from "./state/selectors";
 import type { Tool } from "./state/store";
 
 const TOOL_KEYS: Record<string, Tool> = { v: "select", h: "hand", z: "zoom", r: "rotate", p: "pen" };
@@ -14,10 +15,10 @@ function isTyping(event: KeyboardEvent): boolean {
 export function handleShortcut(app: App, event: KeyboardEvent): boolean {
   if (event.key === "Escape") {
     if (app.state.homing) app.cancelHoming();
-    else if (!app.state.dialog) app.deselect();
+    else if (!modalOpen(app.state)) app.deselect();
     return false;
   }
-  if (app.state.dialog) return false; // a dialog is open: only Esc (above) does anything
+  if (modalOpen(app.state)) return false; // a dialog is open: only Esc (above) does anything
   if (isTyping(event)) return false;
   const key = event.key.toLowerCase();
   if (event.ctrlKey || event.metaKey) {

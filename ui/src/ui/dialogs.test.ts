@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import "./dialogs";
 import { handleShortcut } from "../shortcuts";
-import { mount, settle, shadow, startApp } from "../test/setup";
+import { mount, readyToPlot, settle, shadow, startApp } from "../test/setup";
 
 type Lit = HTMLElement & { updateComplete: Promise<unknown> };
 
@@ -66,5 +66,51 @@ describe("shortcuts while a dialog is open", () => {
     expect(fake.called("piece_delete")).toEqual([]);
     expect(fake.called("artwork_choose")).toHaveLength(1); // only the import above
     expect(app.state.dialog?.kind).toBe("about");
+  });
+
+  it("Delete does nothing while the plot asks for a pen", async () => {
+    const { app, fake } = await readyToPlot();
+    await app.startPlot();
+    expect(app.state.plot.state).toBe("load_pen");
+    const used = handleShortcut(app, new KeyboardEvent("keydown", { key: "Delete" }));
+    await settle();
+    expect(used).toBe(false);
+    expect(fake.called("piece_delete")).toEqual([]);
+  });
+});
+
+describe("plot dialogs", () => {
+  it("asks for the next pen, and Continue plots it", async () => {
+    const { app } = await readyToPlot();
+    const dialogs = await mount<Lit>("rp-dialogs");
+    await app.startPlot();
+    await dialogs.updateComplete;
+    const root = shadow(dialogs);
+    expect(root.querySelector("h2")?.textContent).toBe("Change the pen");
+    expect(root.querySelector(".message")?.textContent).toBe("Put the black pen in the holder (1 of 2), then click Continue.");
+    (root.querySelector("button.primary") as HTMLButtonElement).click();
+    await settle();
+    expect(app.state.plot.state).toBe("plotting");
+  });
+
+  it("Esc doesn't cancel the plot from the pen-change dialog", async () => {
+    const { app } = await readyToPlot();
+    await mount<Lit>("rp-dialogs");
+    await app.startPlot();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await settle();
+    expect(app.state.plot.state).toBe("load_pen");
+  });
+
+  it("draws a confirmation with its two buttons", async () => {
+    const { app } = await startApp();
+    const dialogs = await mount<Lit>("rp-dialogs");
+    let ran = false;
+    app.store.update({ dialog: { kind: "confirm", title: "Stop the plot?", message: "The pen lifts.", confirm: "Stop", cancel: "Keep plotting", run: () => (ran = true) } });
+    await dialogs.updateComplete;
+    const labels = Array.from(shadow(dialogs).querySelectorAll("button")).map((b) => b.textContent?.trim());
+    expect(labels).toEqual(["Keep plotting", "Stop"]);
+    (shadow(dialogs).querySelector("button.primary") as HTMLButtonElement).click();
+    expect(ran).toBe(true);
   });
 });

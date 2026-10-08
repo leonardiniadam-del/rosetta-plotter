@@ -77,6 +77,18 @@ export class RpDialogs extends AppElement {
       .hint {
         color: var(--warning);
       }
+      .pen {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .pen i {
+        flex: none;
+        width: 28px;
+        height: 28px;
+        border-radius: 4px;
+        border: 1px solid var(--line);
+      }
     `,
   ];
 
@@ -109,7 +121,7 @@ export class RpDialogs extends AppElement {
   }
 
   protected updated(): void {
-    const dialog = this.s.dialog;
+    const dialog = this.current();
     if (dialog === this.lastDialog) return;
     this.lastDialog = dialog;
     if (!dialog) return;
@@ -119,11 +131,16 @@ export class RpDialogs extends AppElement {
     first?.focus();
   }
 
+  /** What the window is asking right now: the pen change comes ahead of any other dialog. */
+  private current(): unknown {
+    return this.s.plot.state === "load_pen" ? "pen" : this.s.dialog;
+  }
+
   private onKey = (event: KeyboardEvent): void => {
-    if (!this.s.dialog) return;
+    if (!this.current()) return;
     if (event.key === "Escape") {
       event.stopPropagation();
-      this.cancel();
+      if (this.s.plot.state !== "load_pen") this.cancel(); // Esc never cancels a plot
       return;
     }
     const target = event.composedPath()[0];
@@ -142,11 +159,27 @@ export class RpDialogs extends AppElement {
   }
 
   render() {
+    if (this.s.plot.state === "load_pen") return this.frame(this.penChange());
     const dialog = this.s.dialog;
     if (!dialog) return nothing;
-    return html`<div class="backdrop" @click=${(e: Event) => e.target === e.currentTarget && this.cancel()}>
-      <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="title">${this.body(dialog)}</div>
+    return this.frame(this.body(dialog), () => this.cancel());
+  }
+
+  private frame(body: unknown, onBackdrop?: () => void) {
+    return html`<div class="backdrop" @click=${(e: Event) => e.target === e.currentTarget && onBackdrop?.()}>
+      <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="title">${body}</div>
     </div>`;
+  }
+
+  private penChange() {
+    const plot = this.s.plot;
+    const color = plot.color === "#000000" ? "var(--ink-black)" : (plot.color ?? "transparent");
+    return html`<h2 id="title">Change the pen</h2>
+      <div class="pen"><i style=${`background: ${color}`}></i><p class="message">${plot.message}</p></div>
+      <div class="buttons">
+        <button @click=${() => void this.app.plotAction("cancel")}>Cancel plot</button>
+        <button class="primary" @click=${() => void this.app.plotAction("continue")}>Continue</button>
+      </div>`;
   }
 
   private close() {
@@ -175,6 +208,13 @@ export class RpDialogs extends AppElement {
         return html`<h2 id="title">Keyboard shortcuts</h2>
           <table>${SHORTCUT_HELP.map(([action, keys]) => html`<tr><td>${action}</td><td class="keys">${keys}</td></tr>`)}</table>
           ${this.close()}`;
+      case "confirm":
+        return html`<h2 id="title">${dialog.title}</h2>
+          ${dialog.message ? html`<p class="message">${dialog.message}</p>` : nothing}
+          <div class="buttons">
+            <button @click=${() => this.app.closeDialog()}>${dialog.cancel}</button>
+            <button class="primary" @click=${() => dialog.run()}>${dialog.confirm}</button>
+          </div>`;
       case "about":
         return html`<h2 id="title">Rosetta Plotter</h2>
           <p>Version ${this.s.start?.version ?? ""}</p>
