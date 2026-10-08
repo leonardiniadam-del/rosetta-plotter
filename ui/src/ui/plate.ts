@@ -8,7 +8,7 @@ import type { ViewRequest } from "../app/app";
 import type { PieceInfo, PlacementData } from "../bridge/contract";
 import { angleAt, GRID, gridLines, handleAt, hitPiece, JOB_MIME, linesToPath, marqueeHits, rectFrom, snapAngle, type IdBox } from "../canvas/interaction";
 import { fitCamera, panBy, toMachine, toScreen, zoomAt, type Camera, type Size } from "../geometry/camera";
-import { routeOf, routePath } from "../geometry/route";
+import { pointAt, routeOf, routePath } from "../geometry/route";
 import { pieceMatrix, rotateAboutCenter, scaleFromHandle, type Box, type Handle, type Point } from "../geometry/placement";
 import { disabledReason } from "../state/reasons";
 import { jobOf, pieceBoxOnPaper, plotRunning, reachOf } from "../state/selectors";
@@ -120,6 +120,26 @@ export class RpPlate extends AppElement {
       .ink.hidden {
         opacity: 0.2;
       }
+      svg.previewing .ink {
+        opacity: 0.25;
+      }
+      .route-down {
+        fill: none;
+        stroke-width: 1.5px;
+        vector-effect: non-scaling-stroke;
+      }
+      .route-up {
+        fill: none;
+        stroke: var(--text-faint);
+        stroke-width: 1px;
+        stroke-dasharray: 3 3;
+        vector-effect: non-scaling-stroke;
+      }
+      .route-dot {
+        fill: var(--pen-cross);
+        stroke: #fff;
+        stroke-width: 1px;
+      }
       .selection {
         fill: none;
         stroke: var(--accent);
@@ -167,6 +187,7 @@ export class RpPlate extends AppElement {
     super();
     // The pen's live position arrives about 10 times a second, in its own store.
     new StoreController(this, this.app.progress);
+    new StoreController(this, this.app.previewClock);
   }
 
   /** The current camera (for tests and the status bar's future use). */
@@ -468,6 +489,7 @@ export class RpPlate extends AppElement {
     const clipRight = reach ? Math.min(m.x + m.width, reach[0]) : m.x + m.width;
     const clipBottom = reach ? Math.min(m.y + m.height, reach[1]) : m.y + m.height;
     return html`<svg
+      class=${s.preview ? "previewing" : ""}
       role="img"
       aria-label="The plotter's reach, the paper and the drawings on it"
       @pointerdown=${this.onDown}
@@ -499,9 +521,9 @@ export class RpPlate extends AppElement {
         ${this.axes(reach)}
         <g mask="url(#off-paper)">${repeat(s.pieces, (p) => p.id, (piece) => this.piece(piece, "off"))}</g>
         <g clip-path="url(#printable)">${repeat(s.pieces, (p) => p.id, (piece) => this.piece(piece, "ink"))}</g>
-        ${this.drawnSoFar()}
+        ${this.drawnSoFar()} ${this.previewRoute()}
       </g>
-      ${this.selection()} ${this.crosshair()} ${this.marquee()}
+      ${this.selection()} ${this.crosshair()} ${this.previewDot()} ${this.marquee()}
     </svg>`;
   }
 
@@ -600,6 +622,37 @@ export class RpPlate extends AppElement {
       (layer, index) =>
         svg`<path class="drawn" d=${routePath(route, index, true, index < progress.layer ? Infinity : until)} style=${`stroke: ${inkColor(layer.color)}`} />`,
     );
+  }
+
+  private readonly routePaths = new WeakMap<object, { up: string[]; down: string[] }>();
+
+  /** Preview path: every pen's pen-down moves in its color and pen-up moves as faint dashes. */
+  private previewRoute() {
+    const s = this.s;
+    if (!s.preview || !s.summary) return nothing;
+    let paths = this.routePaths.get(s.summary);
+    if (!paths) {
+      // Cached per plan: the dot moves 30 times a second, the paths don't.
+      const route = routeOf(s.summary);
+      paths = {
+        up: s.summary.layers.map((_, i) => routePath(route, i, false)),
+        down: s.summary.layers.map((_, i) => routePath(route, i, true)),
+      };
+      this.routePaths.set(s.summary, paths);
+    }
+    const p = paths;
+    return s.summary.layers.map(
+      (layer, i) => svg`<path class="route-up" d=${p.up[i]} /><path class="route-down" d=${p.down[i]} style=${`stroke: ${inkColor(layer.color)}`} />`,
+    );
+  }
+
+  private previewDot() {
+    const s = this.s;
+    if (!s.preview || !s.summary) return nothing;
+    const at = pointAt(routeOf(s.summary), this.app.previewClock.state.t);
+    if (!at) return nothing;
+    const [cx, cy] = toScreen(this.camera, at);
+    return svg`<circle class="route-dot" cx=${cx} cy=${cy} r="4" />`;
   }
 
   private crosshair() {

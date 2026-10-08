@@ -245,4 +245,16 @@ describe("rp-plate", () => {
     expect(root.querySelector("path.drawn")?.getAttribute("d")).toMatch(/^M/);
     expect(root.querySelector("rect.cross-box")).not.toBeNull();
   });
+
+  it("Preview path draws the route and a dot", async () => {
+    const { app } = await readyToPlot();
+    app.startPreview();
+    app.tickPreview(500);
+    const plate = await mount<HTMLElement & { updateComplete: Promise<unknown> }>("rp-plate");
+    await plate.updateComplete;
+    const root = shadow(plate);
+    expect(root.querySelectorAll("path.route-down").length).toBe(2);
+    expect(root.querySelector("circle.route-dot")).not.toBeNull();
+    app.endPreview();
+  });
 });

@@ -3,7 +3,8 @@ import { css, html, nothing } from "lit";
 import { live } from "lit/directives/live.js";
 import { ONE_DRAWING, STRETCH_TURNED } from "../app/app";
 import { isQuarterTurn } from "../geometry/placement";
-import { overallFraction } from "../state/plotting";
+import { routeOf } from "../geometry/route";
+import { formatDuration, overallFraction } from "../state/plotting";
 import { disabledReason } from "../state/reasons";
 import { jobOf, plotRunning, selectedPieces, selectionBox } from "../state/selectors";
 import { StoreController } from "../state/store";
@@ -74,15 +75,35 @@ export class RpControlbar extends AppElement {
   constructor() {
     super();
     new StoreController(this, this.app.progress);
+    new StoreController(this, this.app.previewClock);
   }
 
   render() {
     const s = this.s;
-    const left = s.selection.length > 0 ? this.drawingControls() : this.paperControls();
+    const left = s.preview ? this.previewControls() : s.selection.length > 0 ? this.drawingControls() : this.paperControls();
     const fraction = plotRunning(s) && s.summary ? overallFraction(s.summary.total_seconds, this.app.progress.state.value) : 0;
     return html`<div class="left">${left}</div><rp-plotbar></rp-plotbar>${fraction > 0
         ? html`<div class="progress" style=${`width: ${(fraction * 100).toFixed(1)}%`}></div>`
         : nothing}`;
+  }
+
+  private previewControls() {
+    const s = this.s;
+    const preview = s.preview;
+    if (!preview) return nothing;
+    const total = s.summary ? routeOf(s.summary).total : 0;
+    const t = this.app.previewClock.state.t;
+    return html`<span class="name">Preview path</span>
+      <button class="icon" aria-label=${preview.playing ? "Pause the preview" : "Play the preview"} @click=${() => this.app.playPreview(!preview.playing)}>
+        ${icon(preview.playing ? "pause" : "play")}
+      </button>
+      <input type="range" aria-label="Preview position" min="0" max=${total} step="0.1" .value=${String(t)}
+        @input=${(e: Event) => this.app.seekPreview(Number((e.target as HTMLInputElement).value))} />
+      <span>${formatDuration(t)} / ${formatDuration(total)}</span>
+      ${([1, 4, 16] as const).map(
+        (speed) => html`<button aria-pressed=${String(preview.speed === speed)} @click=${() => this.app.setPreviewSpeed(speed)}>${speed}×</button>`,
+      )}
+      <button class="icon" aria-label="Close the preview (Esc)" @click=${() => this.app.endPreview()}>${icon("x")}</button>`;
   }
 
   private drawingControls() {

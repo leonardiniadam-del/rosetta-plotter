@@ -414,3 +414,30 @@ describe("plot actions and their confirmations", () => {
   });
 });
 
+
+describe("preview path", () => {
+  it("plays at the chosen speed and stops at the end", async () => {
+    const { app } = await readyToPlot();
+    app.startPreview();
+    expect(app.state.preview).toEqual({ playing: true, speed: 1 });
+    app.tickPreview(1000);
+    expect(app.previewClock.state.t).toBeCloseTo(1);
+    app.setPreviewSpeed(16);
+    app.tickPreview(1000);
+    expect(app.previewClock.state.t).toBeCloseTo(17);
+    app.tickPreview(10_000_000);
+    expect(app.state.preview?.playing).toBe(false);
+    app.endPreview();
+  });
+
+  it("explains when the times aren't ready, and ends with another tool", async () => {
+    const { app } = await startApp();
+    app.startPreview();
+    expect(app.state.preview).toBeNull();
+    expect(app.state.notice?.message).toBe("Nothing placed on the paper.");
+    const ready = await readyToPlot();
+    ready.app.startPreview();
+    ready.app.setTool("hand");
+    expect(ready.app.state.preview).toBeNull();
+  });
+});

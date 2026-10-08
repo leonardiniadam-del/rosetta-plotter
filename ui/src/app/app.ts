@@ -5,6 +5,7 @@
 import { BridgeError, type Client } from "../bridge/client";
 import type { MachineStatus, PlacementData, PlotProgress, PlotStatus } from "../bridge/contract";
 import { MAX_SCALE, pieceBox, resizeBox, rotateAboutCenter, type Point } from "../geometry/placement";
+import { routeOf } from "../geometry/route";
 import { formatLength, type Units } from "../geometry/units";
 import { AT_REST } from "../state/plotting";
 import { disabledReason, type Control } from "../state/reasons";
@@ -22,6 +23,7 @@ const MAX_PAPER_MM = 2000;
 /** Half the smallest step a field shows (0.01 in), so a rounded limit typed back is accepted. */
 const ROUNDING_MM = 0.127;
 const INFO_MS = 8000;
+const PREVIEW_TICK_MS = 33;
 const DROP_MEMORY_MS = 3000;
 
 /** Each plot.actions entry, and the bridge method it calls (bridge.md "Plot"). */
@@ -81,6 +83,9 @@ export class App {
   private colorsTimer: ReturnType<typeof setTimeout> | null = null;
   private noticeTimer: ReturnType<typeof setTimeout> | null = null;
   private prepareTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Preview path's clock (seconds from the start of the plot): its own store, as it ticks 30 times a second. */
+  readonly previewClock = new Store<{ t: number }>({ t: 0 });
+  private previewTimer: ReturnType<typeof setInterval> | null = null;
   /** Counts plot_state events: a reply sent before the newest one has an older picture of the plot. */
   private plotEvents = 0;
   /** Plot actions sent and not answered yet: a double-click mustn't send one twice. */
@@ -143,6 +148,8 @@ export class App {
     if (this.prepareTimer) clearTimeout(this.prepareTimer);
     this.scanTimer = this.colorsTimer = this.noticeTimer = this.prepareTimer = null;
     this.prepareAgain = false;
+    if (this.previewTimer) clearInterval(this.previewTimer);
+    this.previewTimer = null;
   }
 
   onEvent(name: string, data: unknown): void {
@@ -339,6 +346,7 @@ export class App {
   }
 
   setTool(tool: Tool): void {
+    if (this.state.preview) this.endPreview();
     this.store.update({ tool });
   }
 
@@ -792,6 +800,48 @@ export class App {
     }
   }
 
+  // Preview path (spec §4.5).
+
+  startPreview(): void {
+    if (this.blocked("preview")) return;
+    this.previewClock.update({ t: 0 });
+    this.store.update({ preview: { playing: true, speed: 1 } });
+    if (!this.previewTimer) this.previewTimer = setInterval(() => this.tickPreview(PREVIEW_TICK_MS), PREVIEW_TICK_MS);
+  }
+
+  endPreview(): void {
+    if (this.previewTimer) clearInterval(this.previewTimer);
+    this.previewTimer = null;
+    if (this.state.preview) this.store.update({ preview: null });
+  }
+
+  playPreview(playing: boolean): void {
+    const preview = this.state.preview;
+    if (!preview || !this.state.summary) return;
+    if (playing && this.previewClock.state.t >= routeOf(this.state.summary).total) this.previewClock.update({ t: 0 });
+    this.store.update({ preview: { ...preview, playing } });
+  }
+
+  setPreviewSpeed(speed: 1 | 4 | 16): void {
+    const preview = this.state.preview;
+    if (preview) this.store.update({ preview: { ...preview, speed } });
+  }
+
+  seekPreview(t: number): void {
+    const total = this.state.summary ? routeOf(this.state.summary).total : 0;
+    this.previewClock.update({ t: Math.min(total, Math.max(0, t)) });
+  }
+
+  /** Move the preview on by `ms` of real time (its timer calls this; tests call it directly). */
+  tickPreview(ms: number): void {
+    const { preview, summary } = this.state;
+    if (!preview?.playing || !summary) return;
+    const total = routeOf(summary).total;
+    const t = Math.min(total, this.previewClock.state.t + (ms / 1000) * preview.speed);
+    this.previewClock.update({ t });
+    if (t >= total) this.store.update({ preview: { ...preview, playing: false } });
+  }
+
   // The plot's state (spec §4.4).
 
   private onPlotState(plot: PlotStatus): void {
@@ -799,6 +849,8 @@ export class App {
     this.store.update((s) => ({ plot, summary: plot.state === "idle" ? null : s.summary }));
     if (AT_REST.includes(plot.state)) this.progress.update({ value: null });
     if (plot.state === "idle") this.schedulePrepare();
+    // The route is gone (the plot changed) or a real plot has begun.
+    if (plot.state === "idle" || plotRunning(this.state)) this.endPreview();
     // A question about the running plot means nothing once it's over.
     const asked = this.state.dialog;
     if (AT_REST.includes(plot.state) && asked?.kind === "confirm" && asked.plot) this.closeDialog();

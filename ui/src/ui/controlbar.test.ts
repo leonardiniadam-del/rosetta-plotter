@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import "./controlbar";
-import { mount, settle, shadow, startApp } from "../test/setup";
+import { mount, readyToPlot, settle, shadow, startApp } from "../test/setup";
 import type { RpField } from "./field";
 
 type RpControlbarLike = HTMLElement & { updateComplete: Promise<unknown> };
@@ -125,5 +125,21 @@ describe("control bar, a drawing selected", () => {
     expect(root.textContent).toContain("2 drawings");
     expect(field(root, "W").disabled).toBe(true);
     expect(field(root, "W").tip).toBe("Select one drawing to resize or turn it.");
+  });
+});
+
+describe("control bar, preview path", () => {
+  it("has a scrubber and speeds", async () => {
+    const { app } = await readyToPlot();
+    app.startPreview();
+    app.playPreview(false);
+    const root = shadow(await mount("rp-controlbar"));
+    const scrubber = root.querySelector('input[type="range"]') as HTMLInputElement;
+    scrubber.value = "3";
+    scrubber.dispatchEvent(new Event("input"));
+    expect(app.previewClock.state.t).toBe(3);
+    (Array.from(root.querySelectorAll("button")).find((b) => b.textContent?.trim() === "4×") as HTMLButtonElement).click();
+    expect(app.state.preview?.speed).toBe(4);
+    app.endPreview();
   });
 });
