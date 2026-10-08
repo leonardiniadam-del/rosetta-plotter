@@ -69,6 +69,27 @@ def _accept_dropped_files(window, api: Api) -> None:
     document.events.drop += DOMEventHandler(on_drop, True, True)
 
 
+class AppPageGuard:
+    """pywebview hands the bridge (js_api) to any page the window shows. If the window ever leaves the
+    app's own page (a link, or a file dropped where nothing catches it), take it back
+    (plan2-notes "Lock navigation")."""
+
+    def __init__(self, window):
+        self._window = window
+        self._home: str | None = None
+
+    def on_loaded(self) -> None:
+        url = self._window.get_current_url()
+        if not url:
+            return
+        page = url.split("#")[0].split("?")[0]
+        if self._home is None:
+            self._home = page
+        elif page != self._home:
+            logger.warning("The window left the app's page for %s; going back", url)
+            self._window.load_url(self._home)
+
+
 def main() -> int:
     ensure_std_streams()
     log_path = setup_logging(app_folder() / "logs")
@@ -95,6 +116,8 @@ def main() -> int:
     sink.attach(window.evaluate_js)
     window.events.closing += api._on_closing
     window.events.loaded += lambda: _accept_dropped_files(window, api)
+    if entry:
+        window.events.loaded += AppPageGuard(window).on_loaded
     try:
         webview.start(gui="edgechromium", http_server=True, debug=bool(os.environ.get(DEBUG_VARIABLE)))
     finally:

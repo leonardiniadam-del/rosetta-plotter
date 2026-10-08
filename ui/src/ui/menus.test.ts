@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import "./menubar";
 import { handleShortcut, installShortcuts } from "../shortcuts";
-import { mount, settle, shadow, startApp } from "../test/setup";
+import { mount, readyToPlot, settle, shadow, startApp } from "../test/setup";
 
 function key(init: KeyboardEventInit): KeyboardEvent {
   return new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
@@ -131,5 +131,56 @@ describe("menus and Esc", () => {
     await bar.updateComplete;
     const inches = Array.from(shadow(bar).querySelectorAll('[role="menu"] button')).find((b) => b.textContent?.includes("Inches"));
     expect(inches?.getAttribute("role")).toBe("menuitemradio");
+  });
+});
+
+describe("plot commands", () => {
+  it("the Plotter menu has the plot commands, greyed with reasons", async () => {
+    await startApp();
+    const bar = await mount<HTMLElement & { updateComplete: Promise<unknown> }>("rp-menubar");
+    const root = shadow(bar);
+    await openMenu(root, "Plotter");
+    const items = Array.from(root.querySelectorAll('[role="menu"] button')).map((b) => b.querySelector(".label")?.textContent);
+    expect(items).toEqual(expect.arrayContaining(["Trace outline", "Preview path", "Start", "Pause", "Stop"]));
+    expect(item(root, "Start").getAttribute("aria-disabled")).toBe("true");
+    expect(item(root, "Start").title).not.toBe("");
+  });
+
+  it("Settings… is in the File menu", async () => {
+    const { app } = await startApp();
+    const root = shadow(await mount("rp-menubar"));
+    await openMenu(root, "File");
+    item(root, "Settings…").click();
+    await settle();
+    expect(app.state.dialog?.kind).toBe("settings");
+  });
+
+  it("the Plotter menu starts a preview when a plot is possible", async () => {
+    const { app } = await readyToPlot();
+    const root = shadow(await mount("rp-menubar"));
+    await openMenu(root, "Plotter");
+    item(root, "Preview path").click();
+    await settle();
+    expect(app.state.preview).not.toBeNull();
+    app.endPreview();
+  });
+
+  it("Ctrl+Enter starts, Ctrl+Shift+P pauses, Ctrl+, opens Settings", async () => {
+    const { app } = await readyToPlot();
+    expect(handleShortcut(app, new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true }))).toBe(true);
+    await settle();
+    expect(app.state.plot.state).toBe("load_pen");
+    await app.plotAction("continue");
+    handleShortcut(app, new KeyboardEvent("keydown", { key: "P", ctrlKey: true, shiftKey: true }));
+    await settle();
+    expect(["pausing", "paused"]).toContain(app.state.plot.state);
+    const other = await startApp();
+    handleShortcut(other.app, new KeyboardEvent("keydown", { key: ",", ctrlKey: true }));
+    expect(other.app.state.dialog?.kind).toBe("settings");
+  });
+
+  it("Ctrl+P is swallowed so the WebView's print dialog doesn't open", async () => {
+    const { app } = await startApp();
+    expect(handleShortcut(app, new KeyboardEvent("keydown", { key: "p", ctrlKey: true }))).toBe(true);
   });
 });

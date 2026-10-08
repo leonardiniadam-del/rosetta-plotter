@@ -1,4 +1,4 @@
-/** The keyboard shortcuts in Plan 2b-1, for Help › Keyboard shortcuts (shortcuts.ts implements them). */
+/** The keyboard shortcuts in Plans 2b-1 and 2b-2, for Help › Keyboard shortcuts (shortcuts.ts implements them). */
 export const SHORTCUT_HELP: [action: string, keys: string][] = [
   ["Select tool", "V"],
   ["Hand tool", "H, or hold Space"],
@@ -6,6 +6,10 @@ export const SHORTCUT_HELP: [action: string, keys: string][] = [
   ["Rotate tool", "R (Shift snaps to 15°)"],
   ["Move pen to point", "P"],
   ["Import", "Ctrl+I"],
+  ["Settings", "Ctrl+,"],
+  ["Start the plot", "Ctrl+Enter"],
+  ["Pause the plot", "Ctrl+Shift+P"],
+  ["End Preview path", "Esc"],
   ["Duplicate", "Ctrl+D"],
   ["Delete", "Del"],
   ["Select all / Deselect", "Ctrl+A / Ctrl+Shift+A"],

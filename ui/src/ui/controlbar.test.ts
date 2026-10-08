@@ -142,4 +142,20 @@ describe("control bar, preview path", () => {
     expect(app.state.preview?.speed).toBe(4);
     app.endPreview();
   });
+
+  it("dragging the scrubber pauses the preview, so the thumb doesn't fight the pointer", async () => {
+    const { app } = await readyToPlot();
+    app.startPreview();
+    app.playPreview(true);
+    const root = shadow(await mount("rp-controlbar"));
+    const scrubber = root.querySelector('input[type="range"]') as HTMLInputElement;
+    scrubber.dispatchEvent(new Event("pointerdown"));
+    expect(app.state.preview?.playing).toBe(false);
+    app.playPreview(true);
+    scrubber.value = "2";
+    scrubber.dispatchEvent(new Event("input"));
+    expect(app.state.preview?.playing).toBe(false);
+    expect(app.previewClock.state.t).toBe(2);
+    app.endPreview();
+  });
 });

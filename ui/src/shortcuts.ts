@@ -33,6 +33,11 @@ export function handleShortcut(app: App, event: KeyboardEvent): boolean {
     else if (key === "0") app.requestView({ kind: event.altKey ? "fit-reach" : "fit-paper" });
     else if (key === "=" || key === "+") app.requestView({ kind: "zoom", factor: 1.25 });
     else if (key === "-") app.requestView({ kind: "zoom", factor: 0.8 });
+    else if (key === "enter") void app.startPlot();
+    else if (key === "p" && event.shiftKey) app.pause();
+    else if (key === "p") {
+      // Ctrl+P would open the WebView's print dialog: nothing to print here.
+    } else if (key === ",") app.openSettings();
     else return false;
     return true;
   }

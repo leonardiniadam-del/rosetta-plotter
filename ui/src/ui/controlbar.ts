@@ -98,7 +98,11 @@ export class RpControlbar extends AppElement {
         ${icon(preview.playing ? "pause" : "play")}
       </button>
       <input type="range" aria-label="Preview position" min="0" max=${total} step="0.1" .value=${String(t)}
-        @input=${(e: Event) => this.app.seekPreview(Number((e.target as HTMLInputElement).value))} />
+        @pointerdown=${() => this.app.playPreview(false)}
+        @input=${(e: Event) => {
+          this.app.playPreview(false); // the thumb would fight the pointer while the preview runs
+          this.app.seekPreview(Number((e.target as HTMLInputElement).value));
+        }} />
       <span>${formatDuration(t)} / ${formatDuration(total)}</span>
       ${([1, 4, 16] as const).map(
         (speed) => html`<button aria-pressed=${String(preview.speed === speed)} @click=${() => this.app.setPreviewSpeed(speed)}>${speed}×</button>`,

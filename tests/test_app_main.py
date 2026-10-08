@@ -32,3 +32,28 @@ def test_dropped_files_give_their_full_paths():
     ]}}
     assert main.dropped_paths(event) == ["C:\\art\\a.svg"]
     assert main.dropped_paths({}) == []
+
+
+class _Window:
+    def __init__(self):
+        self.url = None
+        self.loaded = []
+
+    def get_current_url(self):
+        return self.url
+
+    def load_url(self, url):
+        self.loaded.append(url)
+
+
+def test_the_window_goes_back_to_the_app_page():
+    window = _Window()
+    guard = main.AppPageGuard(window)
+    window.url = "http://127.0.0.1:5000/index.html"
+    guard.on_loaded()
+    window.url = "http://127.0.0.1:5000/index.html#settings"
+    guard.on_loaded()
+    assert window.loaded == []
+    window.url = "file:///C:/Users/student/drawing.svg"
+    guard.on_loaded()
+    assert window.loaded == ["http://127.0.0.1:5000/index.html"]

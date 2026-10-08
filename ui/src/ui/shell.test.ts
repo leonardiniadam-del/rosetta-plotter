@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import "./app-shell";
-import { mount, settle, shadow, startApp } from "../test/setup";
+import { mount, readyToPlot, settle, shadow, startApp } from "../test/setup";
 
 function button(root: ShadowRoot, label: string): HTMLButtonElement {
   const found = root.querySelector(`button[aria-label^="${label}"]`);
@@ -69,5 +69,34 @@ describe("tools", () => {
     pen.click();
     expect(app.state.tool).toBe("select");
     expect(app.state.notice?.message).toMatch(/^Home not set/);
+  });
+
+  it("has Trace outline and Preview path tools, greyed with a reason until a plot is possible", async () => {
+    await startApp();
+    const root = shadow(await mount("rp-tools"));
+    expect(button(root, "Trace outline").getAttribute("aria-disabled")).toBe("true");
+    expect(button(root, "Preview path").getAttribute("aria-disabled")).toBe("true");
+    expect(button(root, "Preview path").title).not.toBe("Preview path (Esc ends it)");
+  });
+
+  it("the Preview path tool starts the preview and, pressed, ends it", async () => {
+    const { app } = await readyToPlot();
+    const tools = await mount<HTMLElement & { updateComplete: Promise<unknown> }>("rp-tools");
+    const root = shadow(tools);
+    button(root, "Preview path").click();
+    await settle();
+    expect(app.state.preview).not.toBeNull();
+    expect(button(root, "Preview path").getAttribute("aria-pressed")).toBe("true");
+    button(root, "Preview path").click();
+    await settle();
+    expect(app.state.preview).toBeNull();
+  });
+
+  it("the Trace outline tool traces", async () => {
+    const { fake } = await readyToPlot();
+    const root = shadow(await mount("rp-tools"));
+    button(root, "Trace outline").click();
+    await settle();
+    expect(fake.called("plot_trace")).toHaveLength(1);
   });
 });

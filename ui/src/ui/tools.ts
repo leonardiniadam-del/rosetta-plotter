@@ -70,6 +70,20 @@ export class RpTools extends AppElement {
           reason: disabledReason("setHome", s),
           run: () => void app.setHome(),
         },
+        {
+          label: "Trace outline",
+          iconName: "trace",
+          pressed: s.plot.state === "tracing",
+          reason: disabledReason("trace", s),
+          run: () => void app.trace(),
+        },
+        {
+          label: "Preview path (Esc ends it)",
+          iconName: "route",
+          pressed: s.preview !== null,
+          reason: s.preview ? null : disabledReason("preview", s),
+          run: () => (s.preview ? app.endPreview() : app.startPreview()),
+        },
       ],
       [
         tool("rotate", "Rotate (R): drag around the drawing; Shift snaps to 15°", "rotate"),

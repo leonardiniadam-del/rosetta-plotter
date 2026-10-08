@@ -134,6 +134,7 @@ export class RpMenubar extends AppElement {
         name: "File",
         items: [
           { label: "Import…", shortcut: "Ctrl+I", run: () => void app.importFiles() },
+          { label: "Settings…", shortcut: "Ctrl+,", run: () => app.openSettings() },
           "separator",
           { label: "Copy diagnostics", run: () => void app.copyDiagnostics() },
           "separator",
@@ -186,6 +187,13 @@ export class RpMenubar extends AppElement {
           },
           { label: "Plotter model…", reason: disabledReason("model", s), run: () => app.openModelDialog() },
           { label: "Move pen Home", reason: disabledReason("move", s), run: () => void app.movePenHome() },
+          "separator",
+          { label: "Trace outline", reason: disabledReason("trace", s), run: () => void app.trace() },
+          { label: "Preview path", reason: disabledReason("preview", s), run: () => app.startPreview() },
+          "separator",
+          { label: "Start", shortcut: "Ctrl+Enter", reason: disabledReason("start", s), run: () => void app.startPlot() },
+          { label: "Pause", shortcut: "Ctrl+Shift+P", reason: disabledReason("pause", s), run: () => app.pause() },
+          { label: "Stop", reason: disabledReason("stop", s), run: () => app.stopPlot() },
         ],
       },
       {
