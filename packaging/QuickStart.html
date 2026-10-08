@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rosetta Plotter Quick Start</title>
+<style>
+  :root { --ink: #1b1b1b; --muted: #5a5a5a; --accent: #3b8eea; --line: #d9d7d0; --paper: #ffffff; --note: #f4f3ef; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #ececec; --muted: #b0b0b0; --accent: #6aa9f0; --line: #3a3a3a; --paper: #1e1e1e; --note: #2a2a2a; }
+  }
+  body { margin: 0; background: var(--paper); color: var(--ink);
+         font: 16px/1.55 "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.8rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  h2 { font-size: 1.2rem; margin: 28px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+  ol { padding-left: 1.4em; }
+  li { margin: 6px 0; }
+  b { font-weight: 600; }
+  kbd { font: 0.9em Consolas, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  .note { background: var(--note); border-left: 4px solid var(--accent); padding: 10px 14px; margin: 12px 0; }
+  .warn { border-left-color: #d9a03b; }
+  footer { margin-top: 36px; color: var(--muted); font-size: 0.9rem; }
+  @media print { .note { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<main>
+<h1>Rosetta Plotter Quick Start</h1>
+<p class="sub">Plot your drawing on an AxiDraw in a few steps.</p>
+
+<h2>1. Install</h2>
+<ol>
+  <li>Double-click <b>RosettaPlotterSetup</b>.</li>
+  <li>Windows may show a blue box that says <b>&ldquo;Windows protected your PC&rdquo;</b>. This is normal for this
+      app. Click <b>More info</b>, then click <b>Run anyway</b>.</li>
+  <li>Click through the installer. It installs just for you, so you don't need an administrator password.</li>
+  <li>If your laptop is missing a part called <b>Microsoft Edge WebView2 Runtime</b>, the installer adds it for you.
+      If it says it needs administrator rights for that, ask your instructor or IT help desk.</li>
+  <li>Open <b>Rosetta Plotter</b> from the Start menu (or the desktop shortcut, if you made one).</li>
+</ol>
+
+<h2>2. Connect the plotter</h2>
+<ol>
+  <li>Plug the AxiDraw's <b>power adapter</b> into the wall and into the plotter.</li>
+  <li>Plug the <b>USB cable</b> into the plotter and into your laptop.</li>
+  <li>The status bar in the app shows the plotter's name when it's connected. If it says <b>Model unknown</b>, choose
+      <b>Plotter &rsaquo; Plotter model&hellip;</b> and pick your AxiDraw.</li>
+</ol>
+<div class="note">The power adapter matters: without it, the pen can't move even though the app sees the plotter.</div>
+
+<h2>3. Set Home</h2>
+<p>Home is <b>the HOME corner (next to the HOME label and the USB port)</b>. The app measures everything from there.</p>
+<ol>
+  <li>Click <b>Set Home</b> (in the <b>Plotter</b> menu or the tool strip). The motors let go.</li>
+  <li>Gently slide the pen carriage by hand into the HOME corner, as far as it goes.</li>
+  <li>Click <b>Set Home</b> again. Press <kbd>Esc</kbd> instead if you want to cancel.</li>
+</ol>
+<div class="note warn">Do this every time you turn the plotter on or move the carriage by hand.</div>
+
+<h2>4. Import your drawing</h2>
+<ol>
+  <li>Click <b>Import</b> in the Jobs list (or <b>File &rsaquo; Import&hellip;</b>, <kbd>Ctrl</kbd>+<kbd>I</kbd>),
+      or drag a file onto the window. SVG, PDF and Illustrator (.ai) files work.</li>
+  <li>For a file with several pages, pick the page you want.</li>
+  <li>A &#9888; next to a job means something needs a look. Hover over it to read why.</li>
+</ol>
+
+<h2>5. Place it on the paper</h2>
+<ol>
+  <li>Choose your <b>Paper</b> size in the side panel.</li>
+  <li>Double-click the job to place it in the paper's corner nearest Home, or drag it onto the paper.</li>
+  <li>Drag it to move it. Drag a corner handle to scale (hold <kbd>Shift</kbd> to keep its proportions).
+      Drawings come in at 100%, so scale drawings stay to scale.</li>
+  <li>Anything shown in <b>red</b> is off the paper and won't be drawn.</li>
+  <li>Tape your paper down on the plotter so it lines up with the paper on screen.</li>
+</ol>
+
+<h2>6. Plot</h2>
+<ol>
+  <li>Optional: <b>Trace outline</b> moves the pen (raised) around your drawing so you can check where it lands.</li>
+  <li>Put a pen in the holder and click <b>Start</b> (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>).</li>
+  <li><b>Pause</b> stops the pen safely so you can carry on later. <b>Stop</b> ends the plot for good.</li>
+</ol>
+
+<h2>7. Pen changes</h2>
+<ol>
+  <li>If your drawing has more than one color, the pen goes back Home and the app asks for the next pen,
+      for example &ldquo;Put the <b>red</b> pen in the holder (2 of 3), then click Continue.&rdquo;</li>
+  <li>Swap the pen, then click <b>Continue</b>.</li>
+</ol>
+
+<h2>If something goes wrong</h2>
+<ul>
+  <li><b>Plotter disconnected:</b> check the USB cable and the power adapter, plug it back in, then click
+      <b>Continue</b>.</li>
+  <li><b>The app asks you to slide the pen Home:</b> slide it into the HOME corner (next to the HOME label and the USB
+      port), then click <b>It's in the corner</b>.</li>
+  <li>Still stuck? Choose <b>File &rsaquo; Copy diagnostics</b> and send that text to your instructor.</li>
+</ul>
+
+<footer>Rosetta Plotter is free software under the GNU Affero General Public License v3 (see LICENSE).</footer>
+</main>
+</body>
+</html>
