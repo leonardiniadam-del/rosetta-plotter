@@ -3,19 +3,18 @@
  * placed drawings, selection handles and the pen crosshair. No numbers or labels are drawn here.
  */
 import { css, html, nothing, svg } from "lit";
+import { repeat } from "lit/directives/repeat.js";
 import type { ViewRequest } from "../app/app";
 import type { PieceInfo, PlacementData } from "../bridge/contract";
-import { angleAt, gridLines, handleAt, hitPiece, JOB_MIME, linesToPath, marqueeHits, rectFrom, snapAngle, type IdBox } from "../canvas/interaction";
+import { angleAt, GRID, gridLines, handleAt, hitPiece, JOB_MIME, linesToPath, marqueeHits, rectFrom, snapAngle, type IdBox } from "../canvas/interaction";
 import { fitCamera, panBy, toMachine, toScreen, zoomAt, type Camera, type Size } from "../geometry/camera";
 import { pieceMatrix, rotateAboutCenter, scaleFromHandle, type Box, type Handle, type Point } from "../geometry/placement";
-import type { Units } from "../geometry/units";
 import { disabledReason } from "../state/reasons";
 import { jobOf, pieceBoxOnPaper, plotRunning, reachOf } from "../state/selectors";
 import type { Tool } from "../state/store";
 import { AppElement } from "./base";
 import { controls } from "./styles";
 
-const GRID_MM: Record<Units, number> = { in: 6.35, mm: 10, cm: 10 };
 const MIN_GRID_PX = 6;
 const HANDLE_PX = 7;
 const CROSS_PX = 9;
@@ -26,7 +25,7 @@ const ONE_DRAWING = "Select one drawing to resize or turn it.";
 type Drag =
   | { kind: "pan"; last: Point }
   | { kind: "move"; start: Point; originals: Map<string, PlacementData> }
-  | { kind: "scale"; id: string; handle: Handle; original: PlacementData }
+  | { kind: "scale"; id: string; handle: Handle; original: PlacementData; offset: Point }
   | { kind: "rotate"; id: string; center: Point; startAngle: number; original: PlacementData }
   | { kind: "marquee"; start: Point; end: Point; additive: boolean };
 
@@ -36,11 +35,6 @@ function samePlacement(a: PlacementData, b: PlacementData): boolean {
 
 function inkColor(color: string): string {
   return color === "#000000" ? "var(--ink-black)" : color;
-}
-
-function isTyping(event: KeyboardEvent): boolean {
-  const target = event.composedPath()[0];
-  return target instanceof HTMLElement && (["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName) || target.isContentEditable);
 }
 
 export class RpPlate extends AppElement {
@@ -53,6 +47,10 @@ export class RpPlate extends AppElement {
         overflow: hidden;
         background: var(--canvas);
         outline: none;
+      }
+      :host(:focus-visible) {
+        outline: 1px solid var(--accent);
+        outline-offset: -1px;
       }
       :host([data-tool="hand"]) {
         cursor: grab;
@@ -187,6 +185,12 @@ export class RpPlate extends AppElement {
     this.measure();
   }
 
+  protected willUpdate(): void {
+    // Drop the cached paths of drawings that are gone.
+    const jobs = new Set(this.s.jobs.map((j) => j.id));
+    for (const key of this.paths.keys()) if (!jobs.has(key.split("|")[0])) this.paths.delete(key);
+  }
+
   protected updated(): void {
     this.dataset.tool = this.activeTool();
   }
@@ -222,9 +226,17 @@ export class RpPlate extends AppElement {
   };
 
   private onSpace = (event: KeyboardEvent): void => {
-    if (event.code !== "Space" || isTyping(event)) return;
-    event.preventDefault();
+    if (event.code !== "Space" && event.key !== " ") return;
     const held = event.type === "keydown";
+    if (held) {
+      // Space pans only from the plate or the bare page: a focused button, field or menu, or an open dialog, keeps its Space.
+      const target = event.composedPath()[0];
+      const onPlateOrPage = target === this || target === document.body || target === document.documentElement || target === window;
+      if (!onPlateOrPage || this.s.dialog) return;
+      event.preventDefault();
+    } else if (!this.spaceHeld) {
+      return;
+    }
     if (held !== this.spaceHeld) {
       this.spaceHeld = held;
       this.requestUpdate();
@@ -314,8 +326,9 @@ export class RpPlate extends AppElement {
     const handles = locked ? null : this.handles();
     const handle = handles ? handleAt(screen, handles) : null;
     const one = this.selectedOne();
-    if (handle && one) {
-      this.drag = { kind: "scale", id: one.id, handle, original: one.placement };
+    if (handle && one && handles) {
+      const corner = this.paperPoint(handles[handle]);
+      this.drag = { kind: "scale", id: one.id, handle, original: one.placement, offset: [corner[0] - paper[0], corner[1] - paper[1]] };
       this.capture(event);
       return;
     }
@@ -368,7 +381,8 @@ export class RpPlate extends AppElement {
     const job = piece ? jobOf(this.s, piece) : undefined;
     if (!job) return;
     if (drag.kind === "scale") {
-      this.app.previewPlacement(drag.id, scaleFromHandle(job.width_mm, job.height_mm, drag.original, drag.handle, paper, event.shiftKey));
+      const corner: Point = [paper[0] + drag.offset[0], paper[1] + drag.offset[1]];
+      this.app.previewPlacement(drag.id, scaleFromHandle(job.width_mm, job.height_mm, drag.original, drag.handle, corner, event.shiftKey));
       return;
     }
     const turned = drag.original.rotation + angleAt(drag.center, paper) - drag.startAngle;
@@ -446,6 +460,10 @@ export class RpPlate extends AppElement {
         <clipPath id="printable" clipPathUnits="userSpaceOnUse">
           <rect x=${m.x} y=${m.y} width=${Math.max(0, clipRight - m.x)} height=${Math.max(0, clipBottom - m.y)} />
         </clipPath>
+        <mask id="off-paper" maskUnits="userSpaceOnUse" x="-100000" y="-100000" width="200000" height="200000">
+          <rect x="-100000" y="-100000" width="200000" height="200000" fill="white" />
+          <rect x=${m.x} y=${m.y} width=${Math.max(0, clipRight - m.x)} height=${Math.max(0, clipBottom - m.y)} fill="black" />
+        </mask>
       </defs>
       <g transform=${`matrix(${cam.scale} 0 0 ${cam.scale} ${cam.x} ${cam.y})`}>
         ${s.view.grid ? this.grid() : nothing}
@@ -456,15 +474,15 @@ export class RpPlate extends AppElement {
           ? svg`<rect class="margin" x=${m.x + s.margin} y=${m.y + s.margin} width=${Math.max(0, m.width - 2 * s.margin)} height=${Math.max(0, m.height - 2 * s.margin)} />`
           : nothing}
         ${this.axes(reach)}
-        ${s.pieces.map((piece) => this.piece(piece, "off"))}
-        <g clip-path="url(#printable)">${s.pieces.map((piece) => this.piece(piece, "ink"))}</g>
+        <g mask="url(#off-paper)">${repeat(s.pieces, (p) => p.id, (piece) => this.piece(piece, "off"))}</g>
+        <g clip-path="url(#printable)">${repeat(s.pieces, (p) => p.id, (piece) => this.piece(piece, "ink"))}</g>
       </g>
       ${this.selection()} ${this.crosshair()} ${this.marquee()}
     </svg>`;
   }
 
   private grid() {
-    const spacing = GRID_MM[this.s.units];
+    const { minor, every } = GRID[this.s.units];
     const [x0, y0] = toMachine(this.camera, [0, 0]);
     const [x1, y1] = toMachine(this.camera, [this.size.width, this.size.height]);
     const lines = (step: number, kind: string) => {
@@ -473,7 +491,7 @@ export class RpPlate extends AppElement {
         (y) => svg`<line class=${kind} x1=${x0} y1=${y} x2=${x1} y2=${y} />`,
       )}`;
     };
-    return svg`${lines(spacing, "minor")}${lines(spacing * 5, "major")}`;
+    return svg`${lines(minor, "minor")}${lines(minor * every, "major")}`;
   }
 
   private unreachable(reach: [number, number] | null) {

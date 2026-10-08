@@ -113,7 +113,9 @@ export class RpDialogs extends AppElement {
     if (dialog === this.lastDialog) return;
     this.lastDialog = dialog;
     if (!dialog) return;
-    const first = this.renderRoot.querySelector<HTMLElement>(".dialog input, .dialog select, .dialog textarea, .dialog button");
+    const first =
+      this.renderRoot.querySelector<HTMLElement>(".dialog input:checked") ??
+      this.renderRoot.querySelector<HTMLElement>(".dialog input, .dialog select, .dialog textarea, .dialog button");
     first?.focus();
   }
 

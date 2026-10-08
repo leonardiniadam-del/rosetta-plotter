@@ -30,6 +30,16 @@ describe("plotter model dialog", () => {
     expect(fake.called("plotter_identify")).toEqual([[6, 1, ""]]); // no stored label while the model is unknown
   });
 
+  it("focuses the checked model first", async () => {
+    const { app } = await startApp();
+    const dialogs = await mount<Lit>("rp-dialogs");
+    app.openModelDialog();
+    await dialogs.updateComplete;
+    await dialogs.updateComplete;
+    const active = shadow(dialogs).activeElement as HTMLInputElement | null;
+    expect(active?.matches('input[name="model"]:checked')).toBe(true);
+  });
+
   it("takes focus, and Enter confirms", async () => {
     const { app } = await startApp();
     const dialogs = await mount<Lit>("rp-dialogs");

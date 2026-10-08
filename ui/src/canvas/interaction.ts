@@ -1,9 +1,16 @@
 /** Pure helpers for the plate: hit testing, the marquee, handles, angles, paths and the grid. */
 import type { Box, Handle, Point } from "../geometry/placement";
-import { normalizeAngle } from "../geometry/units";
+import { normalizeAngle, type Units } from "../geometry/units";
 
 /** The drag-and-drop type for a job dragged from the Jobs list onto the plate. */
 export const JOB_MIME = "application/x-rosetta-job";
+
+/** Grid spacing in mm: a minor line, and a stronger one every `every` minor lines (spec §2.4). */
+export const GRID: Record<Units, { minor: number; every: number }> = {
+  in: { minor: 6.35, every: 4 }, // 1/4 in, stronger every inch
+  mm: { minor: 10, every: 5 },
+  cm: { minor: 10, every: 5 },
+};
 
 export interface IdBox {
   id: string;

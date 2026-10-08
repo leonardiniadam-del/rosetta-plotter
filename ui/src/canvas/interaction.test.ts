@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { angleAt, gridLines, handleAt, hitPiece, linesToPath, marqueeHits, rectFrom, snapAngle, unionBox } from "./interaction";
+import { angleAt, GRID, gridLines, handleAt, hitPiece, linesToPath, marqueeHits, rectFrom, snapAngle, unionBox } from "./interaction";
 
 const boxes = [
   { id: "a", box: { x: 0, y: 0, width: 50, height: 50 } },
@@ -16,6 +16,12 @@ describe("plate helpers", () => {
   it("selects what a marquee touches", () => {
     expect(marqueeHits(boxes, rectFrom([60, 60], [100, 100]))).toEqual(["b"]);
     expect(marqueeHits(boxes, rectFrom([100, 100], [-1, -1]))).toEqual(["a", "b"]);
+  });
+
+  it("the inch grid has a stronger line every inch", () => {
+    expect(GRID.in.minor * GRID.in.every).toBeCloseTo(25.4);
+    expect(GRID.mm.minor * GRID.mm.every).toBe(50);
+    expect(GRID.cm.minor * GRID.cm.every).toBe(50);
   });
 
   it("finds a handle near the pointer", () => {

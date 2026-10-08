@@ -10,6 +10,10 @@ describe("icons", () => {
   it("are all real SVGs", () => {
     for (const name of ICON_NAMES) expect(iconSvg(name)).toMatch(/^<svg class="icon" aria-hidden="true"/);
   });
+
+  it("each icon has exactly one class attribute", () => {
+    for (const name of ICON_NAMES) expect(iconSvg(name).match(/\sclass=/g)).toHaveLength(1);
+  });
 });
 
 describe("rp-field", () => {

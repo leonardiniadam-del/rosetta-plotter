@@ -43,7 +43,10 @@ export type IconName = keyof typeof ICONS;
 export const ICON_NAMES = Object.keys(ICONS) as IconName[];
 
 export function iconSvg(name: IconName): string {
-  return ICONS[name].trim().replace(/^<svg/, '<svg class="icon" aria-hidden="true" focusable="false"');
+  return ICONS[name]
+    .trim()
+    .replace(/\s+class="[^"]*"/, "")
+    .replace(/^<svg/, '<svg class="icon" aria-hidden="true" focusable="false"');
 }
 
 /** An icon for a Lit template. Decorative: the button around it carries the accessible name. */

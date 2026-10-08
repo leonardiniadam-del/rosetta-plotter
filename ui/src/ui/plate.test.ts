@@ -133,6 +133,84 @@ describe("rp-plate", () => {
     expect(plate.view.scale).toBeGreaterThan(1);
   });
 
+  it("keeps the corner under the pointer's grab offset when a handle is grabbed a little off", async () => {
+    const { fake, svg } = await plateWithJob();
+    // The se corner is at (126.35, 86.35); grab 3 px right and 2 px below it, then move 10 px right.
+    await drag(svg, [129.35, 88.35], [139.35, 88.35]);
+    const [, , , scale, , scaleY] = fake.called("piece_place").at(-1) as number[];
+    expect(scale).toBeCloseTo(130 / 120); // the corner moved by 10, not jumped to the pointer
+    expect(scaleY).toBeCloseTo(1);
+  });
+
+  it("Space doesn't pan while a button has focus", async () => {
+    const { plate } = await plateWithJob();
+    const button = document.createElement("button");
+    document.body.append(button);
+    button.focus();
+    const space = new KeyboardEvent("keydown", { key: " ", code: "Space", cancelable: true, bubbles: true, composed: true });
+    button.dispatchEvent(space);
+    await plate.updateComplete;
+    expect(space.defaultPrevented).toBe(false); // the button gets its Space
+    expect(plate.dataset.tool).not.toBe("hand");
+  });
+
+  it("Space doesn't pan while a dialog is open", async () => {
+    const { app, plate } = await plateWithJob();
+    app.showDialog("about");
+    const space = new KeyboardEvent("keydown", { key: " ", code: "Space", cancelable: true, bubbles: true, composed: true });
+    document.body.dispatchEvent(space);
+    await plate.updateComplete;
+    expect(space.defaultPrevented).toBe(false);
+    expect(plate.dataset.tool).not.toBe("hand");
+  });
+
+  it("Space pans from the plate or the page", async () => {
+    const { plate } = await plateWithJob();
+    plate.focus();
+    plate.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", cancelable: true, bubbles: true, composed: true }));
+    await plate.updateComplete;
+    expect(plate.dataset.tool).toBe("hand");
+    plate.dispatchEvent(new KeyboardEvent("keyup", { key: " ", code: "Space", bubbles: true, composed: true }));
+    await plate.updateComplete;
+    expect(plate.dataset.tool).not.toBe("hand");
+    const page = new KeyboardEvent("keydown", { key: " ", code: "Space", cancelable: true, bubbles: true });
+    document.body.dispatchEvent(page);
+    await plate.updateComplete;
+    expect(page.defaultPrevented).toBe(true);
+    expect(plate.dataset.tool).toBe("hand");
+  });
+
+  it("draws the red pass only through a mask that hides the printable paper", async () => {
+    const { root } = await plateWithJob();
+    expect(root.querySelector("mask#off-paper")).not.toBeNull();
+    expect(root.querySelectorAll('g[mask="url(#off-paper)"] path.off')).toHaveLength(2);
+  });
+
+  it("keys the drawings, so deleting one keeps the other's elements", async () => {
+    const { app, plate, root } = await plateWithJob();
+    await app.placeJob("job-1", [50, 50]); // piece-2
+    await plate.updateComplete;
+    const second = root.querySelectorAll('g[clip-path="url(#printable)"] > g')[1];
+    expect(second).toBeDefined();
+    app.select(["piece-1"]);
+    await app.deleteSelection();
+    await plate.updateComplete;
+    expect(root.querySelectorAll('g[clip-path="url(#printable)"] > g')).toHaveLength(1);
+    expect(root.querySelector('g[clip-path="url(#printable)"] > g')).toBe(second);
+  });
+
+  it("forgets the cached paths of a removed drawing", async () => {
+    const { app, plate } = await plateWithJob();
+    const paths = (plate as unknown as { paths: Map<string, string> }).paths;
+    expect(paths.size).toBeGreaterThan(0);
+    app.select(["piece-1"]);
+    await app.deleteSelection();
+    app.removeJob("job-1");
+    await settle();
+    await plate.updateComplete;
+    expect(paths.size).toBe(0);
+  });
+
   it("explains instead of moving the pen before Home", async () => {
     const { app, fake, svg } = await plateWithJob();
     app.setTool("pen");
