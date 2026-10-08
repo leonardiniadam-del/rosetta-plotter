@@ -46,6 +46,7 @@ export class RpControlbar extends AppElement {
         background: var(--accent);
       }
       .name {
+        flex: none; /* .left scrolls instead of squeezing the name away */
         max-width: 140px;
         overflow: hidden;
         text-overflow: ellipsis;
