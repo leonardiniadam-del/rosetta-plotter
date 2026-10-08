@@ -54,6 +54,10 @@ export class App {
   private colorsTimer: ReturnType<typeof setTimeout> | null = null;
   private noticeTimer: ReturnType<typeof setTimeout> | null = null;
   private prepareTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Counts the times the plot went out of date; a prepare reply from an older count is dropped. */
+  private prepareGeneration = 0;
+  /** A prepare was due while another was running. */
+  private prepareAgain = false;
   /** Calls that change what's on the paper run one after another, in the order they were asked for. */
   private edits: Promise<unknown> = Promise.resolve();
   /** The newest placement still to be sent, per piece; only that one goes when the previous reply is in. */
@@ -722,6 +726,8 @@ export class App {
 
   /** Plan the plot (times and path) a moment after the last change, whenever it's out of date. */
   schedulePrepare(): void {
+    // Whatever prepare is on its way now is out of date (onPlotState's idle comes through here too).
+    this.prepareGeneration += 1;
     if (this.prepareTimer) clearTimeout(this.prepareTimer);
     this.prepareTimer = setTimeout(() => {
       this.prepareTimer = null;
@@ -729,24 +735,37 @@ export class App {
     }, this.options.prepareDelayMs);
   }
 
+  /** Idle, or at rest without the page knowing the plan (a reload finds Python already prepared). */
   private canPrepare(): boolean {
     const s = this.state;
-    return s.plot.state === "idle" && !s.preparing && s.pieces.length > 0 && s.machine.model !== null && s.machine.state !== "no_plotter";
+    const outOfDate = s.plot.state === "idle" || (AT_REST.includes(s.plot.state) && s.summary === null);
+    return outOfDate && s.pieces.length > 0 && s.machine.model !== null && s.machine.state !== "no_plotter";
   }
 
   async prepare(): Promise<void> {
+    if (this.state.preparing) {
+      // Python refuses a second prepare: ask again once this one is over.
+      this.prepareAgain = true;
+      return;
+    }
     if (!this.canPrepare()) return;
+    const generation = this.prepareGeneration;
     this.store.update({ preparing: true, prepareProblem: null });
     try {
       const { summary } = await this.client.call("plot_prepare");
-      this.store.update({ summary });
+      // A change overtook this reply (its idle event can arrive first): the plan is old, so it's dropped.
+      if (generation === this.prepareGeneration) this.store.update({ summary });
     } catch (error) {
       // Shown on Start, not in the strip: preparing is automatic. A change while preparing makes Python
       // go back to idle, and that plot_state event prepares again.
       const message = error instanceof BridgeError ? error.message : "The plot couldn't be prepared.";
-      this.store.update({ summary: null, prepareProblem: message });
+      if (generation === this.prepareGeneration) this.store.update({ summary: null, prepareProblem: message });
     } finally {
       this.store.update({ preparing: false });
+      if (this.prepareAgain) {
+        this.prepareAgain = false;
+        this.schedulePrepare();
+      }
     }
   }
 
