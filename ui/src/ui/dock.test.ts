@@ -44,10 +44,12 @@ describe("Pens panel", () => {
     const root = shadow(await mount("rp-pens"));
     expect(root.textContent).toContain("1 Black");
     expect(root.textContent).toContain("2 Red");
-    labelled(root, "Skip the red pen").click();
+    labelled(root, "Plot the red pen").click();
     await settle();
     expect(fake.called("set_pen_visible")).toEqual([["#ff0000", false]]);
     expect(root.textContent).toContain("– Red");
+    // The eye keeps its name; aria-pressed says whether the pen is plotted.
+    expect(labelled(root, "Plot the red pen").getAttribute("aria-pressed")).toBe("false");
   });
 });
 

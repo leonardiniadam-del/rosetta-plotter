@@ -105,3 +105,31 @@ describe("shortcuts", () => {
     expect(app.state.homing).toBe(false);
   });
 });
+
+describe("menus and Esc", () => {
+  it("Esc closes an open menu without deselecting", async () => {
+    const { app } = await startApp();
+    await app.importFiles();
+    await app.placeJob("job-1");
+    const bar = await mount<HTMLElement & { updateComplete: Promise<unknown> }>("rp-menubar");
+    (Array.from(shadow(bar).querySelectorAll("button.title")).find((b) => b.textContent?.trim() === "View") as HTMLButtonElement).click();
+    await bar.updateComplete;
+    const esc = new KeyboardEvent("keydown", { key: "Escape", bubbles: true });
+    let reachedPage = false;
+    window.addEventListener("keydown", () => (reachedPage = true), { once: true });
+    document.body.dispatchEvent(esc);
+    await bar.updateComplete;
+    expect(shadow(bar).querySelector('[role="menu"]')).toBeNull();
+    expect(reachedPage).toBe(false);
+    expect(app.state.selection).toEqual(["piece-1"]);
+  });
+
+  it("Units are radio items", async () => {
+    await startApp();
+    const bar = await mount<HTMLElement & { updateComplete: Promise<unknown> }>("rp-menubar");
+    (Array.from(shadow(bar).querySelectorAll("button.title")).find((b) => b.textContent?.trim() === "View") as HTMLButtonElement).click();
+    await bar.updateComplete;
+    const inches = Array.from(shadow(bar).querySelectorAll('[role="menu"] button')).find((b) => b.textContent?.includes("Inches"));
+    expect(inches?.getAttribute("role")).toBe("menuitemradio");
+  });
+});

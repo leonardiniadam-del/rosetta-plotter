@@ -11,6 +11,7 @@ interface Item {
   shortcut?: string;
   reason?: string | null;
   checked?: boolean;
+  radio?: boolean;
   run: () => void;
 }
 type Entry = Item | "separator" | { heading: string };
@@ -104,12 +105,12 @@ export class RpMenubar extends AppElement {
   connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener("pointerdown", this.onOutside);
-    window.addEventListener("keydown", this.onKey);
+    window.addEventListener("keydown", this.onKey, true);
   }
 
   disconnectedCallback(): void {
     window.removeEventListener("pointerdown", this.onOutside);
-    window.removeEventListener("keydown", this.onKey);
+    window.removeEventListener("keydown", this.onKey, true);
     super.disconnectedCallback();
   }
 
@@ -118,7 +119,10 @@ export class RpMenubar extends AppElement {
   };
 
   private onKey = (event: KeyboardEvent): void => {
-    if (event.key === "Escape") this.open = null;
+    if (event.key === "Escape" && this.open) {
+      this.open = null;
+      event.stopPropagation(); // the page's own Esc (deselect) doesn't run as well
+    }
   };
 
   private menus(): Menu[] {
@@ -165,7 +169,7 @@ export class RpMenubar extends AppElement {
           { label: "Zoom out", shortcut: "Ctrl+-", run: () => app.requestView({ kind: "zoom", factor: 0.8 }) },
           "separator",
           { heading: "Units" },
-          ...UNITS.map((u) => ({ label: UNIT_NAMES[u], checked: s.units === u, run: () => void app.setUnits(u) })),
+          ...UNITS.map((u) => ({ label: UNIT_NAMES[u], checked: s.units === u, radio: true, run: () => void app.setUnits(u) })),
           "separator",
           { label: "Show grid", checked: s.view.grid, run: () => app.toggleView("grid") },
           { label: "Show margins", checked: s.view.margins, run: () => app.toggleView("margins") },
@@ -220,7 +224,7 @@ export class RpMenubar extends AppElement {
     if ("heading" in entry) return html`<div class="heading">${entry.heading}</div>`;
     const reason = entry.reason ?? null;
     return html`<button
-      role=${entry.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+      role=${entry.checked === undefined ? "menuitem" : entry.radio ? "menuitemradio" : "menuitemcheckbox"}
       aria-checked=${entry.checked === undefined ? nothing : String(entry.checked)}
       aria-disabled=${reason ? "true" : "false"}
       title=${reason ?? ""}

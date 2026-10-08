@@ -6,7 +6,11 @@ import type { Dialog } from "../state/store";
 import { AppElement } from "./base";
 import { controls } from "./styles";
 
+const MODEL_FIRST = "Choose the model on the plotter's label first.";
+
 export class RpDialogs extends AppElement {
+  static properties = { chosen: { state: true }, hint: { state: true } };
+
   static styles = [
     controls,
     css`
@@ -70,8 +74,21 @@ export class RpDialogs extends AppElement {
       .keys {
         color: var(--text-dim);
       }
+      .hint {
+        color: var(--warning);
+      }
     `,
   ];
+
+  declare chosen: number | null;
+  declare hint: string;
+  private lastDialog: unknown = null;
+
+  constructor() {
+    super();
+    this.chosen = null;
+    this.hint = "";
+  }
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -83,10 +100,36 @@ export class RpDialogs extends AppElement {
     super.disconnectedCallback();
   }
 
+  protected willUpdate(): void {
+    const dialog = this.s.dialog;
+    if (dialog !== this.lastDialog && dialog?.kind === "model") {
+      this.chosen = this.s.machine.model;
+      this.hint = "";
+    }
+  }
+
+  protected updated(): void {
+    const dialog = this.s.dialog;
+    if (dialog === this.lastDialog) return;
+    this.lastDialog = dialog;
+    if (!dialog) return;
+    const first = this.renderRoot.querySelector<HTMLElement>(".dialog input, .dialog select, .dialog textarea, .dialog button");
+    first?.focus();
+  }
+
   private onKey = (event: KeyboardEvent): void => {
-    if (event.key === "Escape" && this.s.dialog) {
+    if (!this.s.dialog) return;
+    if (event.key === "Escape") {
       event.stopPropagation();
       this.cancel();
+      return;
+    }
+    const target = event.composedPath()[0];
+    const inButtonOrText = target instanceof HTMLElement && ["BUTTON", "TEXTAREA"].includes(target.tagName);
+    if (event.key === "Enter" && !inButtonOrText) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.renderRoot.querySelector<HTMLButtonElement>(".dialog button.primary")?.click();
     }
   };
 
@@ -150,7 +193,10 @@ export class RpDialogs extends AppElement {
         ${models.map(
           (m) =>
             html`<label class="model"
-              ><input type="radio" name="model" value=${m.number} ?checked=${m.number === (machine.model ?? 1)} /><span>${m.name}</span
+              ><input type="radio" name="model" value=${m.number} ?checked=${m.number === this.chosen} @change=${() => {
+                this.chosen = m.number;
+                this.hint = "";
+              }} /><span>${m.name}</span
               ><span class="dim">${formatLength(m.travel[0], units)} × ${formatLength(m.travel[1], units, true)}</span></label
             >`,
         )}
@@ -163,16 +209,24 @@ export class RpDialogs extends AppElement {
         </select></label
       >
       <label>Name <input id="label" maxlength="40" .value=${machine.label ?? ""} placeholder="PSU Lab" /></label>
+      ${this.hint ? html`<p class="hint" role="alert">${this.hint}</p>` : nothing}
       <div class="buttons">
         <button @click=${() => this.app.closeDialog()}>Cancel</button>
-        <button class="primary" @click=${() => this.saveModel()}>Save</button>
+        <button
+          class="primary"
+          aria-disabled=${this.chosen === null ? "true" : "false"}
+          title=${this.chosen === null ? MODEL_FIRST : ""}
+          @click=${() => (this.chosen === null ? (this.hint = MODEL_FIRST) : this.saveModel())}
+        >
+          Save
+        </button>
       </div>`;
   }
 
   private saveModel(): void {
     const root = this.renderRoot;
-    const checked = root.querySelector('input[name="model"]:checked') as HTMLInputElement | null;
-    const model = Number(checked?.value ?? 1);
+    const model = this.chosen;
+    if (model === null) return;
     const penlift = Number((root.querySelector("#penlift") as HTMLSelectElement).value);
     const label = (root.querySelector("#label") as HTMLInputElement).value.trim();
     void this.app.identify(model, penlift, label);

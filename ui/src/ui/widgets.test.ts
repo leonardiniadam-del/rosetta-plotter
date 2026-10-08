@@ -98,7 +98,9 @@ describe("rp-dialogs", () => {
     app.openModelDialog();
     await settle();
     const root = shadow(dialogs);
-    (root.querySelector('input[value="2"]') as HTMLInputElement).checked = true;
+    const two = root.querySelector('input[value="2"]') as HTMLInputElement;
+    two.checked = true;
+    two.dispatchEvent(new Event("change")); // as a real click does
     (root.querySelector("#label") as HTMLInputElement).value = " PSU Lab ";
     (Array.from(root.querySelectorAll("button")).find((b) => b.textContent?.trim() === "Save") as HTMLButtonElement).click();
     await settle();

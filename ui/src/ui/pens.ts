@@ -58,7 +58,7 @@ export class RpPens extends AppElement {
         (c) => html`<div class="row ${c.visible ? "" : "off"}">
           <button
             class="icon eye"
-            aria-label=${`${c.visible ? "Skip" : "Plot"} the ${c.name} pen`}
+            aria-label=${`Plot the ${c.name} pen`}
             aria-pressed=${String(c.visible)}
             @click=${() => this.app.setPenVisible(c.color, !c.visible)}
           >

@@ -17,6 +17,7 @@ export function handleShortcut(app: App, event: KeyboardEvent): boolean {
     else if (!app.state.dialog) app.deselect();
     return false;
   }
+  if (app.state.dialog) return false; // a dialog is open: only Esc (above) does anything
   if (isTyping(event)) return false;
   const key = event.key.toLowerCase();
   if (event.ctrlKey || event.metaKey) {
