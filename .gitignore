@@ -8,3 +8,5 @@ __pycache__/
 rosetta-plot.log
 /ui/node_modules/
 /ui/dist/
+/packaging/vendor/
+/dist-installer/
