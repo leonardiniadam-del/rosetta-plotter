@@ -219,6 +219,13 @@ describe("App", () => {
     expect(app.state.notice?.message).toBe("The margin must be from 0 to 1.97 in.");
   });
 
+  it("accepts the margin limit typed as it's shown (1.97 in)", async () => {
+    const { app, fake } = await startApp();
+    await app.setMargin(1.97 * 25.4);
+    expect(fake.called("set_margin")).toEqual([[50]]);
+    expect(app.state.margin).toBe(50);
+  });
+
   it("checks a custom paper size before asking Python", async () => {
     const { app, fake } = await startApp();
     await app.setUnits("cm");

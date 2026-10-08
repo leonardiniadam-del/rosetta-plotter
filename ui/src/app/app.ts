@@ -18,6 +18,8 @@ const NO_ROOM = "The margins leave no room on this paper.";
 const OLD_FIRMWARE = "This plotter's firmware is old. You'll be asked for the model on each laptop.";
 const MAX_MARGIN_MM = 50;
 const MAX_PAPER_MM = 2000;
+/** Half the smallest step a field shows (0.01 in), so a rounded limit typed back is accepted. */
+const ROUNDING_MM = 0.127;
 const INFO_MS = 8000;
 const DROP_MEMORY_MS = 3000;
 
@@ -359,6 +361,8 @@ export class App {
   }
 
   async setMargin(margin: number): Promise<void> {
+    // The limit is shown rounded ("1.97 in" is 50.04 mm): typing the shown limit means the limit.
+    if (margin > MAX_MARGIN_MM && margin - MAX_MARGIN_MM <= ROUNDING_MM) margin = MAX_MARGIN_MM;
     if (!(margin >= 0 && margin <= MAX_MARGIN_MM)) {
       return this.explain(`The margin must be from 0 to ${formatLength(MAX_MARGIN_MM, this.state.units, true)}.`);
     }
