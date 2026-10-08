@@ -24,6 +24,22 @@ const ROUNDING_MM = 0.127;
 const INFO_MS = 8000;
 const DROP_MEMORY_MS = 3000;
 
+/** Each plot.actions entry, and the bridge method it calls (bridge.md "Plot"). */
+const ACTION_METHODS = {
+  start: "plot_start",
+  continue: "plot_continue",
+  pause: "plot_pause",
+  resume: "plot_resume",
+  home: "plot_home",
+  cancel: "plot_cancel",
+  reconnect: "plot_reconnect",
+  rehomed: "plot_rehomed",
+  retry: "plot_retry",
+} as const;
+export type PlotAction = keyof typeof ACTION_METHODS;
+/** How long Stop waits for the plot to pause before it gives up. */
+const STOP_WAIT_MS = 60_000;
+
 export type ViewRequest = { kind: "fit-paper" } | { kind: "fit-reach" } | { kind: "zoom"; factor: number };
 
 export interface AppOptions {
@@ -111,6 +127,7 @@ export class App {
     if (this.noticeTimer) clearTimeout(this.noticeTimer);
     if (this.prepareTimer) clearTimeout(this.prepareTimer);
     this.scanTimer = this.colorsTimer = this.noticeTimer = this.prepareTimer = null;
+    this.prepareAgain = false;
   }
 
   onEvent(name: string, data: unknown): void {
@@ -301,11 +318,6 @@ export class App {
 
   async exit(): Promise<void> {
     await this.attempt(() => this.client.call("quit_confirmed"));
-  }
-
-  /** The window's close button. A stand-in until Task 8, which asks first while a plot is running. */
-  askToClose(): void {
-    void this.exit();
   }
 
   // Units, tools and the view.
@@ -791,7 +803,130 @@ export class App {
     }
   }
 
-  private showPlotNotice(_plot: PlotStatus, _before: string): void {
-    // Filled in by Task 8.
+  /** The strip for plot states that need the student (spec §4.4), and the result when a plot ends. */
+  private showPlotNotice(plot: PlotStatus, before: string): void {
+    const run = (action: PlotAction) => () => void this.plotAction(action);
+    const cancel = { label: "Cancel plot", run: run("cancel") };
+    const needs: Record<string, Notice> = {
+      reconnect: { kind: "warning", message: plot.message, details: plot.details, actions: [{ label: "Continue", run: run("reconnect") }, cancel] },
+      slide_home: { kind: "warning", message: plot.message, actions: [{ label: "It's in the corner", run: run("rehomed") }, cancel] },
+      not_connected: { kind: "error", message: plot.message, details: plot.details, actions: [{ label: "Retry", run: run("retry") }, cancel] },
+    };
+    const notice = needs[plot.state];
+    if (notice) {
+      this.notify({ ...notice, source: "plot" });
+      return;
+    }
+    if (this.state.notice?.source === "plot") this.dismissNotice();
+    if (plot.state === before) return;
+    if (plot.state === "done") {
+      this.notify({
+        kind: "info",
+        source: "plot",
+        message: plot.message || "Done! The pen is back Home.",
+        actions: [{ label: "Plot another copy", run: () => void this.startPlot() }],
+      });
+    } else if (AT_REST.includes(plot.state) && !AT_REST.includes(before) && plot.message) {
+      this.notify({ kind: plot.details ? "error" : "info", source: "plot", message: plot.message, details: plot.details || undefined });
+    }
+  }
+
+  // Plotting (spec §4.4).
+
+  /** One of plot.actions. Pause never waits behind another plotter request; the rest take their turn. */
+  async plotAction(action: PlotAction): Promise<boolean> {
+    const method = ACTION_METHODS[action];
+    try {
+      const reply = action === "pause" ? await this.client.call(method) : await this.client.hardware(method);
+      this.setMachine(reply.machine);
+      if (reply.plot.state !== this.state.plot.state) this.onPlotState(reply.plot);
+      return true;
+    } catch (error) {
+      this.fail(error);
+      await this.refreshPlot();
+      return false;
+    }
+  }
+
+  async startPlot(): Promise<void> {
+    if (this.blocked("start")) return;
+    if (this.state.notice?.source === "plot") this.dismissNotice();
+    await this.plotAction("start");
+  }
+
+  pause(): void {
+    if (this.blocked("pause")) return;
+    void this.plotAction("pause");
+  }
+
+  /** Stop: a trace stops at once; a plot asks first, then pauses and is cancelled (bridge.md "Stopping a plot"). */
+  stopPlot(): void {
+    if (this.blocked("stop")) return;
+    if (this.state.plot.state === "tracing") {
+      void this.attempt(() => this.client.call("plotter_stop"));
+      return;
+    }
+    this.store.update({
+      dialog: {
+        kind: "confirm",
+        title: "Stop the plot?",
+        message: "The pen lifts and this plot can't be resumed.",
+        confirm: "Stop",
+        cancel: "Keep plotting",
+        run: () => void this.pauseThenCancel(),
+      },
+    });
+  }
+
+  private async pauseThenCancel(): Promise<void> {
+    this.closeDialog();
+    if (!(await this.plotAction("pause"))) return;
+    try {
+      const state = await this.waitForPlot(["paused", "paused_at_home", ...AT_REST], STOP_WAIT_MS);
+      if (state === "paused" || state === "paused_at_home") await this.plotAction("cancel");
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  /** Resolves with the plot's state once it's one of `states`; fails after `ms`. */
+  waitForPlot(states: string[], ms: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let unsubscribe = () => {};
+      const timer = setTimeout(() => {
+        unsubscribe();
+        reject(new BridgeError("The plot didn't stop in time. Click Pause, then Cancel plot."));
+      }, ms);
+      const check = () => {
+        if (!states.includes(this.state.plot.state)) return;
+        clearTimeout(timer);
+        unsubscribe();
+        resolve(this.state.plot.state);
+      };
+      unsubscribe = this.store.subscribe(check);
+      check();
+    });
+  }
+
+  async trace(): Promise<void> {
+    if (this.blocked("trace")) return;
+    await this.plotterAction(() => this.client.hardware("plot_trace"));
+  }
+
+  /** The window was closed mid-plot (close_requested): ask, then close; Python pauses the plot first (spec §4.4). */
+  private askToClose(): void {
+    this.store.update({
+      dialog: {
+        kind: "confirm",
+        title: "Stop the plot and close Rosetta Plotter?",
+        message: "The pen lifts where it is.",
+        confirm: "Stop and close",
+        cancel: "Keep plotting",
+        run: () => {
+          this.closeDialog();
+          void this.exit();
+        },
+      },
+    });
   }
 }
