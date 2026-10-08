@@ -3,6 +3,10 @@
 Run `.venv\\Scripts\\rosetta-app` (no console window), or `.venv\\Scripts\\python -m rosetta.app.main`
 to see Python's output while developing. Set ROSETTA_UI_URL=http://localhost:5173 to show Vite's dev
 server instead of ui/dist, and ROSETTA_DEBUG=1 to allow WebView2's developer tools.
+
+`--smoke-check <result-file>` opens the real window with a stand-in plotter (no serial port is ever
+opened), checks the page comes up, writes a JSON result and closes (rosetta.app.smoke). The build
+script uses it on the frozen app and the installed app.
 """
 import logging
 import os
@@ -12,6 +16,7 @@ from pathlib import Path
 import webview
 from webview.dom import DOMEventHandler
 
+from rosetta.app import smoke
 from rosetta.app.api import ARTWORK_TYPES, Api
 from rosetta.app.events import WindowSink
 from rosetta.app.logs import setup_logging, stop_logging
@@ -102,14 +107,9 @@ class AppPageGuard:
             )
 
 
-def main() -> int:
-    ensure_std_streams()
-    log_path = setup_logging(app_folder() / "logs")
-    logger.info("Rosetta Plotter starting")
-    store = SettingsStore(app_folder() / "settings.json")
-    sink = WindowSink()
-    api = Api(store, sink, log_path=log_path)
-    entry = ui_entry()
+def open_window(api: Api, sink: WindowSink, entry: str | None):
+    """Create the app's one window and wire it to the bridge. Shared by the app and its smoke check
+    (rosetta.app.smoke), so the check exercises the same wiring the students get."""
     window = webview.create_window(
         TITLE,
         url=entry,
@@ -130,8 +130,30 @@ def main() -> int:
     window.events.loaded += lambda: _accept_dropped_files(window, api)
     if entry:
         window.events.loaded += AppPageGuard(window).on_loaded
+    return window
+
+
+def start_gui(func=None) -> None:
+    webview.start(func, gui="edgechromium", http_server=True, debug=bool(os.environ.get(DEBUG_VARIABLE)))
+
+
+def main(argv: list[str] | None = None) -> int:
+    ensure_std_streams()
+    argv = sys.argv[1:] if argv is None else argv
     try:
-        webview.start(gui="edgechromium", http_server=True, debug=bool(os.environ.get(DEBUG_VARIABLE)))
+        smoke_result = smoke.result_path(argv)
+    except smoke.UsageError:
+        return 2
+    if smoke_result is not None:
+        return smoke.run(smoke_result)
+    log_path = setup_logging(app_folder() / "logs")
+    logger.info("Rosetta Plotter starting")
+    store = SettingsStore(app_folder() / "settings.json")
+    sink = WindowSink()
+    api = Api(store, sink, log_path=log_path)
+    open_window(api, sink, ui_entry())
+    try:
+        start_gui()
     finally:
         sink.close()
         logger.info("Rosetta Plotter closed")
