@@ -3,11 +3,14 @@ import { css, html, nothing } from "lit";
 import { live } from "lit/directives/live.js";
 import { ONE_DRAWING, STRETCH_TURNED } from "../app/app";
 import { isQuarterTurn } from "../geometry/placement";
+import { overallFraction } from "../state/plotting";
 import { disabledReason } from "../state/reasons";
-import { jobOf, selectedPieces, selectionBox } from "../state/selectors";
+import { jobOf, plotRunning, selectedPieces, selectionBox } from "../state/selectors";
+import { StoreController } from "../state/store";
 import { AppElement } from "./base";
 import "./field";
 import { icon } from "./icons";
+import "./plotbar";
 import { controls } from "./styles";
 
 type Commit = CustomEvent<number>;
@@ -22,6 +25,17 @@ export class RpControlbar extends AppElement {
         gap: 10px;
         padding: 0 10px;
         overflow: hidden;
+        position: relative;
+      }
+      .spacer {
+        flex: 1;
+      }
+      .progress {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        height: 2px;
+        background: var(--accent);
       }
       .name {
         max-width: 180px;
@@ -48,8 +62,18 @@ export class RpControlbar extends AppElement {
     `,
   ];
 
+  constructor() {
+    super();
+    new StoreController(this, this.app.progress);
+  }
+
   render() {
-    return this.s.selection.length > 0 ? this.drawingControls() : this.paperControls();
+    const s = this.s;
+    const left = s.selection.length > 0 ? this.drawingControls() : this.paperControls();
+    const fraction = plotRunning(s) && s.summary ? overallFraction(s.summary.total_seconds, this.app.progress.state.value) : 0;
+    return html`${left}<span class="spacer"></span><rp-plotbar></rp-plotbar>${fraction > 0
+        ? html`<div class="progress" style=${`width: ${(fraction * 100).toFixed(1)}%`}></div>`
+        : nothing}`;
   }
 
   private drawingControls() {
@@ -107,23 +131,26 @@ export class RpControlbar extends AppElement {
     const custom = s.paper.size === "custom";
     const portrait = s.paper.orientation === "portrait";
     const mark = disabledReason("markCorner", s);
+    const locked = disabledReason("paper", s);
     return html`<label
         >Paper
-        <select aria-label="Paper size" .value=${live(s.paper.size)} @change=${(e: Event) => this.choosePaper((e.target as HTMLSelectElement).value)}>
+        <select aria-label="Paper size" ?disabled=${!!locked} title=${locked ?? ""} .value=${live(s.paper.size)} @change=${(e: Event) => this.choosePaper((e.target as HTMLSelectElement).value)}>
           ${(s.start?.papers ?? []).map((p) => html`<option value=${p.key} ?selected=${p.key === s.paper.size}>${p.label}</option>`)}
           <option value="custom" ?selected=${custom}>Custom</option>
         </select></label
       >
-      <button aria-pressed=${String(!portrait)} @click=${() => this.app.setOrientation("landscape")}>Landscape</button>
-      <button aria-pressed=${String(portrait)} @click=${() => this.app.setOrientation("portrait")}>Portrait</button>
-      <rp-field label="W" .value=${m.width} .units=${units} ?readonly=${!custom} tip=${custom ? "Paper width" : "Choose Custom to type a size"}
+      <button aria-pressed=${String(!portrait)} ?disabled=${!!locked} title=${locked ?? ""} @click=${() => this.app.setOrientation("landscape")}>Landscape</button>
+      <button aria-pressed=${String(portrait)} ?disabled=${!!locked} title=${locked ?? ""} @click=${() => this.app.setOrientation("portrait")}>Portrait</button>
+      <rp-field label="W" .value=${m.width} .units=${units} ?readonly=${!custom} ?disabled=${!!locked}
+        tip=${locked ?? (custom ? "Paper width" : "Choose Custom to type a size")}
         @commit=${(e: Commit) => this.app.setPaper("custom", s.paper.orientation, e.detail, m.height)}></rp-field>
-      <rp-field label="H" .value=${m.height} .units=${units} ?readonly=${!custom} tip=${custom ? "Paper height" : "Choose Custom to type a size"}
+      <rp-field label="H" .value=${m.height} .units=${units} ?readonly=${!custom} ?disabled=${!!locked}
+        tip=${locked ?? (custom ? "Paper height" : "Choose Custom to type a size")}
         @commit=${(e: Commit) => this.app.setPaper("custom", s.paper.orientation, m.width, e.detail)}></rp-field>
       <span class="sep"></span>
-      <rp-field label="X" .value=${m.x} .units=${units} tip="The paper's corner nearest HOME, measured from Home"
+      <rp-field label="X" .value=${m.x} .units=${units} ?disabled=${!!locked} tip=${locked ?? "The paper's corner nearest HOME, measured from Home"}
         @commit=${(e: Commit) => this.app.movePaper(e.detail, m.y)}></rp-field>
-      <rp-field label="Y" .value=${m.y} .units=${units} tip="The paper's corner nearest HOME, measured from Home"
+      <rp-field label="Y" .value=${m.y} .units=${units} ?disabled=${!!locked} tip=${locked ?? "The paper's corner nearest HOME, measured from Home"}
         @commit=${(e: Commit) => this.app.movePaper(m.x, e.detail)}></rp-field>
       <button
         aria-disabled=${mark ? "true" : "false"}
@@ -133,7 +160,8 @@ export class RpControlbar extends AppElement {
         ${icon("mark")}Mark corner at pen
       </button>
       <span class="sep"></span>
-      <rp-field label="Margin" .value=${s.margin} .units=${units} tip="Guides only; also where double-click places a drawing"
+      <rp-field label="Margin" .value=${s.margin} .units=${units} ?disabled=${!!locked}
+        tip=${locked ?? "Guides only; also where double-click places a drawing"}
         @commit=${(e: Commit) => this.app.setMargin(e.detail)}></rp-field>`;
   }
 

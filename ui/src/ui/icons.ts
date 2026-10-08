@@ -25,9 +25,15 @@ import penUp from "@tabler/icons/outline/arrow-bar-to-up.svg?raw";
 import plug from "@tabler/icons/outline/plug-connected.svg?raw";
 import plugOff from "@tabler/icons/outline/plug-connected-x.svg?raw";
 import plus from "@tabler/icons/outline/plus.svg?raw";
+import pause from "@tabler/icons/outline/player-pause.svg?raw";
+import play from "@tabler/icons/outline/player-play.svg?raw";
+import stop from "@tabler/icons/outline/player-stop.svg?raw";
 import pointer from "@tabler/icons/outline/pointer.svg?raw";
 import rotate from "@tabler/icons/outline/rotate-clockwise.svg?raw";
 import rotatePaper from "@tabler/icons/outline/rotate-rectangle.svg?raw";
+import route from "@tabler/icons/outline/route.svg?raw";
+import settings from "@tabler/icons/outline/settings.svg?raw";
+import trace from "@tabler/icons/outline/border-outer.svg?raw";
 import trash from "@tabler/icons/outline/trash.svg?raw";
 import unlink from "@tabler/icons/outline/unlink.svg?raw";
 import x from "@tabler/icons/outline/x.svg?raw";
@@ -35,8 +41,8 @@ import zoom from "@tabler/icons/outline/zoom-in.svg?raw";
 
 const ICONS = {
   alert, arrowDown, arrowLeft, arrowRight, arrowUp, center, check, chevronDown, crosshair, duplicate, eye, eyeOff,
-  file, filePdf, fileVector, hand, home, info, link, mark, penDown, penUp, plug, plugOff, plus, pointer, rotate,
-  rotatePaper, trash, unlink, x, zoom,
+  file, filePdf, fileVector, hand, home, info, link, mark, pause, penDown, penUp, play, plug, plugOff, plus, pointer,
+  rotate, rotatePaper, route, settings, stop, trace, trash, unlink, x, zoom,
 };
 
 export type IconName = keyof typeof ICONS;
