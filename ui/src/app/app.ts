@@ -3,9 +3,10 @@
  * the strip, calls Python (plotter requests one at a time), and updates the store.
  */
 import { BridgeError, type Client } from "../bridge/client";
-import type { MachineStatus, PlacementData, PlotStatus } from "../bridge/contract";
+import type { MachineStatus, PlacementData, PlotProgress, PlotStatus } from "../bridge/contract";
 import { MAX_SCALE, pieceBox, resizeBox, rotateAboutCenter, type Point } from "../geometry/placement";
 import { formatLength, type Units } from "../geometry/units";
+import { AT_REST } from "../state/plotting";
 import { disabledReason, type Control } from "../state/reasons";
 import { jobOf, pieceBoxOnPaper, plotRunning, selectedPieces, selectionBox } from "../state/selectors";
 import { Store, type AppState, type Notice, type Tool, type ViewOptions } from "../state/store";
@@ -27,10 +28,12 @@ export type ViewRequest = { kind: "fit-paper" } | { kind: "fit-reach" } | { kind
 
 export interface AppOptions {
   colorsDelayMs: number;
+  /** How long after the last change the plot is prepared again (spec §4.3). */
+  prepareDelayMs: number;
   scanIntervalMs: number;
 }
 
-const DEFAULTS: AppOptions = { colorsDelayMs: 300, scanIntervalMs: 2000 };
+const DEFAULTS: AppOptions = { colorsDelayMs: 300, prepareDelayMs: 800, scanIntervalMs: 2000 };
 
 function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
@@ -43,11 +46,14 @@ export class App {
   readonly viewRequests = new EventTarget();
   /** Where files from Windows were dropped on the plate, so the files_dropped event can place them there. */
   lastFileDrop: { point: Point; at: number } | null = null;
+  /** The newest plot_progress event: its own store, so 10 updates a second re-render only what shows it. */
+  readonly progress = new Store<{ value: PlotProgress | null }>({ value: null });
 
   private readonly options: AppOptions;
   private scanTimer: ReturnType<typeof setInterval> | null = null;
   private colorsTimer: ReturnType<typeof setTimeout> | null = null;
   private noticeTimer: ReturnType<typeof setTimeout> | null = null;
+  private prepareTimer: ReturnType<typeof setTimeout> | null = null;
   /** Calls that change what's on the paper run one after another, in the order they were asked for. */
   private edits: Promise<unknown> = Promise.resolve();
   /** The newest placement still to be sent, per piece; only that one goes when the previous reply is in. */
@@ -82,10 +88,12 @@ export class App {
       paper: start.settings.paper,
       margin: start.settings.margin_mm,
       plot: start.plot,
+      advanced: start.settings.advanced,
       jobs,
       pieces,
     });
     this.refreshColors();
+    this.schedulePrepare();
     this.scanTimer = setInterval(() => {
       if (this.state.machine.state === "no_plotter") void this.scan();
     }, this.options.scanIntervalMs);
@@ -97,12 +105,17 @@ export class App {
     if (this.scanTimer) clearInterval(this.scanTimer);
     if (this.colorsTimer) clearTimeout(this.colorsTimer);
     if (this.noticeTimer) clearTimeout(this.noticeTimer);
-    this.scanTimer = this.colorsTimer = this.noticeTimer = null;
+    if (this.prepareTimer) clearTimeout(this.prepareTimer);
+    this.scanTimer = this.colorsTimer = this.noticeTimer = this.prepareTimer = null;
   }
 
   onEvent(name: string, data: unknown): void {
     if (name === "plot_state") {
-      this.store.update({ plot: data as PlotStatus });
+      this.onPlotState(data as PlotStatus);
+    } else if (name === "plot_progress") {
+      this.progress.update({ value: data as PlotProgress });
+    } else if (name === "close_requested") {
+      this.askToClose();
     } else if (name === "files_dropped") {
       const recent = this.lastFileDrop && Date.now() - this.lastFileDrop.at < DROP_MEMORY_MS;
       const point = recent && this.lastFileDrop ? this.lastFileDrop.point : undefined;
@@ -166,7 +179,12 @@ export class App {
   // The plotter.
 
   setMachine(machine: MachineStatus): void {
+    const previous = this.state.machine;
     this.store.update((s) => ({ machine, homing: s.homing && machine.state === "not_homed" }));
+    // The model became known or changed, or the plotter came or went: the plot is prepared for it again.
+    if (machine.model !== previous.model || (previous.state === "no_plotter") !== (machine.state === "no_plotter")) {
+      this.schedulePrepare();
+    }
     if (machine.old_firmware && !this.oldFirmwareSaid) {
       this.oldFirmwareSaid = true;
       this.notify({ kind: "info", message: OLD_FIRMWARE });
@@ -281,6 +299,11 @@ export class App {
     await this.attempt(() => this.client.call("quit_confirmed"));
   }
 
+  /** The window's close button. A stand-in until Task 8, which asks first while a plot is running. */
+  askToClose(): void {
+    void this.exit();
+  }
+
   // Units, tools and the view.
 
   async setUnits(units: Units): Promise<void> {
@@ -312,6 +335,7 @@ export class App {
     customWidth: number | null = null,
     customHeight: number | null = null,
   ): Promise<void> {
+    if (this.blocked("paper")) return;
     if (size === "custom") {
       const usable = (v: number | null) => v !== null && Number.isFinite(v) && v > 0 && v <= MAX_PAPER_MM;
       if (!usable(customWidth) || !usable(customHeight)) {
@@ -336,6 +360,7 @@ export class App {
 
   /** The orientation buttons swap the paper's sides; the drawings stay where they are. */
   async setOrientation(orientation: "landscape" | "portrait"): Promise<void> {
+    if (this.blocked("paper")) return;
     const { paper, material } = this.state;
     if (paper.orientation === orientation) return;
     if (paper.size === "custom") await this.setPaper("custom", orientation, material.height, material.width);
@@ -343,6 +368,7 @@ export class App {
   }
 
   async movePaper(x: number, y: number): Promise<void> {
+    if (this.blocked("paper")) return;
     const p = this.state.paper;
     const reply = await this.attempt(() =>
       this.client.call("material_set", p.size, p.orientation, p.custom_width_mm, p.custom_height_mm, x, y),
@@ -353,7 +379,7 @@ export class App {
   }
 
   async markCorner(): Promise<void> {
-    if (this.blocked("markCorner")) return;
+    if (this.blocked("paper") || this.blocked("markCorner")) return;
     const reply = await this.attempt(() => this.client.call("material_mark_corner"));
     if (!reply) return;
     this.store.update({ material: reply.material });
@@ -361,6 +387,7 @@ export class App {
   }
 
   async setMargin(margin: number): Promise<void> {
+    if (this.blocked("paper")) return;
     // The limit is shown rounded ("1.97 in" is 50.04 mm): typing the shown limit means the limit.
     if (margin > MAX_MARGIN_MM && margin - MAX_MARGIN_MM <= ROUNDING_MM) margin = MAX_MARGIN_MM;
     if (!(margin >= 0 && margin <= MAX_MARGIN_MM)) {
@@ -674,6 +701,7 @@ export class App {
 
   /** Ask Python for the pen colors, a moment after the last change (spec §4.3). */
   refreshColors(): void {
+    this.schedulePrepare();
     if (this.colorsTimer) clearTimeout(this.colorsTimer);
     this.colorsTimer = setTimeout(() => {
       this.colorsTimer = null;
@@ -688,5 +716,63 @@ export class App {
     this.store.update((s) => ({ colors: s.colors.map((c) => (c.color === color ? { ...c, visible } : c)) }));
     await this.attempt(() => this.client.call("set_pen_visible", color, visible));
     this.refreshColors();
+  }
+
+  // Preparing the plot (spec §4.3).
+
+  /** Plan the plot (times and path) a moment after the last change, whenever it's out of date. */
+  schedulePrepare(): void {
+    if (this.prepareTimer) clearTimeout(this.prepareTimer);
+    this.prepareTimer = setTimeout(() => {
+      this.prepareTimer = null;
+      void this.prepare();
+    }, this.options.prepareDelayMs);
+  }
+
+  private canPrepare(): boolean {
+    const s = this.state;
+    return s.plot.state === "idle" && !s.preparing && s.pieces.length > 0 && s.machine.model !== null && s.machine.state !== "no_plotter";
+  }
+
+  async prepare(): Promise<void> {
+    if (!this.canPrepare()) return;
+    this.store.update({ preparing: true, prepareProblem: null });
+    try {
+      const { summary } = await this.client.call("plot_prepare");
+      this.store.update({ summary });
+    } catch (error) {
+      // Shown on Start, not in the strip: preparing is automatic. A change while preparing makes Python
+      // go back to idle, and that plot_state event prepares again.
+      const message = error instanceof BridgeError ? error.message : "The plot couldn't be prepared.";
+      this.store.update({ summary: null, prepareProblem: message });
+    } finally {
+      this.store.update({ preparing: false });
+    }
+  }
+
+  // The plot's state (spec §4.4).
+
+  private onPlotState(plot: PlotStatus): void {
+    const before = this.state.plot.state;
+    this.store.update((s) => ({ plot, summary: plot.state === "idle" ? null : s.summary }));
+    if (AT_REST.includes(plot.state)) this.progress.update({ value: null });
+    if (plot.state === "idle") this.schedulePrepare();
+    this.showPlotNotice(plot, before);
+    if (AT_REST.includes(plot.state) && !AT_REST.includes(before)) void this.refreshPlot();
+  }
+
+  /** Ask Python where the plot and the plotter are (after a refused call, or when a plot ends). */
+  async refreshPlot(): Promise<void> {
+    try {
+      const reply = await this.client.call("plot_status");
+      this.setMachine(reply.machine);
+      if (reply.plot.state !== this.state.plot.state) this.onPlotState(reply.plot);
+    } catch {
+      await this.scan();
+    }
+  }
+
+  private showPlotNotice(_plot: PlotStatus, _before: string): void {
+    // Filled in by Task 8.
   }
 }

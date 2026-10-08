@@ -2,6 +2,7 @@
 import type { JobInfo, PieceInfo } from "../bridge/contract";
 import { unionBox } from "../canvas/interaction";
 import { pieceBox, type Box } from "../geometry/placement";
+import { AT_REST } from "./plotting";
 import type { AppState } from "./store";
 
 export function jobOf(state: AppState, piece: PieceInfo): JobInfo | undefined {
@@ -30,5 +31,10 @@ export function selectionBox(state: AppState): Box | null {
 }
 
 export function plotRunning(state: AppState): boolean {
-  return state.machine.state === "plotting" || !["idle", "ready", "done"].includes(state.plot.state);
+  return state.machine.state === "plotting" || !AT_REST.includes(state.plot.state);
+}
+
+/** A dialog, or the pen-change dialog, has the window's attention: shortcuts wait. */
+export function modalOpen(state: AppState): boolean {
+  return state.dialog !== null || state.plot.state === "load_pen";
 }

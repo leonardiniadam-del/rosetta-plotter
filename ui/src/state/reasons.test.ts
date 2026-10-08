@@ -49,4 +49,19 @@ describe("disabled reasons", () => {
     expect(disabledReason("setHome", state("no_plotter"))).toMatch(/^No plotter/);
     expect(disabledReason("setHome", state("not_homed"))).toBeNull();
   });
+
+  it("Start waits for the plot to be prepared, and says why", () => {
+    const ready = {
+      ...initialState(),
+      machine: { ...initialState().machine, state: "ready" as const, power_ok: true, model: 5 },
+      pieces: [{ id: "piece-1", job_id: "job-1", placement: { x: 0, y: 0, scale: 1, scale_y: 1, rotation: 0 } }],
+    };
+    expect(disabledReason("start", { ...ready, preparing: true })).toBe("The plot is being prepared.");
+    expect(disabledReason("start", { ...ready, prepareProblem: "Nothing to plot: no lines land on the paper." })).toBe(
+      "Nothing to plot: no lines land on the paper.",
+    );
+    expect(disabledReason("start", ready)).toBe("The plot isn't ready yet.");
+    expect(disabledReason("pause", ready)).toBe("Not plotting.");
+    expect(disabledReason("stop", { ...ready, plot: { ...ready.plot, state: "tracing" } })).toBeNull();
+  });
 });

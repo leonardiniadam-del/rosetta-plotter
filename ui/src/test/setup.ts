@@ -9,12 +9,25 @@ import { initialState, Store } from "../state/store";
 const running: App[] = [];
 
 export async function startApp(fake = new FakeApi()): Promise<{ app: App; fake: FakeApi }> {
-  const app = new App(new Store(initialState()), new Client(fake), { colorsDelayMs: 0, scanIntervalMs: 60_000 });
+  const app = new App(new Store(initialState()), new Client(fake), { colorsDelayMs: 0, prepareDelayMs: 0, scanIntervalMs: 60_000 });
   fake.emit = (name, data) => app.onEvent(name, data);
   running.push(app);
   setApp(app);
   await app.start();
   return { app, fake };
+}
+
+/** A homed plotter with one drawing placed (black and red pens), and the plot prepared. */
+export async function readyToPlot(fake = new FakeApi()): Promise<{ app: App; fake: FakeApi }> {
+  const started = await startApp(fake);
+  const { app } = started;
+  await app.setHome();
+  await app.setHome();
+  await app.importFiles();
+  await app.placeJob("job-1");
+  await settle();
+  await settle();
+  return started;
 }
 
 /** Let pending promises and zero-delay timers run. */

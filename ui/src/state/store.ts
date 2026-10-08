@@ -1,6 +1,17 @@
 /** The app's one state, and how Lit components follow it. */
 import type { ReactiveController, ReactiveControllerHost } from "lit";
-import type { AppStart, JobInfo, MachineStatus, Material, PaperChoice, PenColor, PieceInfo, PlotStatus } from "../bridge/contract";
+import type {
+  AdvancedValues,
+  AppStart,
+  JobInfo,
+  MachineStatus,
+  Material,
+  PaperChoice,
+  PenColor,
+  PieceInfo,
+  PlotStatus,
+  PlotSummary,
+} from "../bridge/contract";
 import type { Units } from "../geometry/units";
 
 export type Tool = "select" | "hand" | "zoom" | "rotate" | "pen";
@@ -16,6 +27,8 @@ export interface Notice {
   message: string;
   details?: string;
   actions?: NoticeAction[];
+  /** Notices the plot puts up, which it takes down again. */
+  source?: "plot";
 }
 
 export type Dialog =
@@ -23,7 +36,9 @@ export type Dialog =
   | { kind: "model" }
   | { kind: "text"; title: string; text: string }
   | { kind: "shortcuts" }
-  | { kind: "about" };
+  | { kind: "about" }
+  | { kind: "confirm"; title: string; message: string; confirm: string; cancel: string; run: () => void }
+  | { kind: "settings" };
 
 export interface ViewOptions {
   grid: boolean;
@@ -53,6 +68,15 @@ export interface AppState {
   notice: Notice | null;
   dialog: Dialog | null;
   plot: PlotStatus;
+  /** The prepared plot: per-pen times and the planned path (null until plot_prepare replies). */
+  summary: PlotSummary | null;
+  preparing: boolean;
+  /** Why the plot couldn't be prepared (shown on Start), or null. */
+  prepareProblem: string | null;
+  skipWhite: boolean;
+  advanced: AdvancedValues;
+  /** Preview path: playing or paused, and the speed. Null when it isn't showing. */
+  preview: { playing: boolean; speed: 1 | 4 | 16 } | null;
 }
 
 export const NO_MACHINE: MachineStatus = {
@@ -93,6 +117,12 @@ export function initialState(): AppState {
     notice: null,
     dialog: null,
     plot: { ...IDLE_PLOT },
+    summary: null,
+    preparing: false,
+    prepareProblem: null,
+    skipWhite: true,
+    advanced: {},
+    preview: null,
   };
 }
 
