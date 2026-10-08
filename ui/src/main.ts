@@ -3,17 +3,19 @@ import "./theme.css";
 import "./ui/app-shell";
 import { App } from "./app/app";
 import { setApp } from "./app/context";
-import { Client, listenForEvents, waitForApi } from "./bridge/client";
+import { Client, insideApp, listenForEvents, waitForApi } from "./bridge/client";
 import type { Api } from "./bridge/contract";
 import { FakeApi } from "./bridge/fake";
 import { installShortcuts } from "./shortcuts";
 import { initialState, Store } from "./state/store";
 
 async function pickApi(): Promise<Api> {
+  // pywebview creates window.pywebview before it fills the API, so insideApp() is true in the window from the start.
+  const plainBrowser = import.meta.env.DEV && !insideApp();
   try {
-    return await waitForApi(import.meta.env.DEV ? 1500 : 15000);
+    return await waitForApi(plainBrowser ? 1500 : 15000);
   } catch (error) {
-    if (import.meta.env.DEV) return new FakeApi(); // a plain browser: run against the demo backend
+    if (plainBrowser) return new FakeApi(); // `npm run dev` in a browser: the demo backend
     throw error;
   }
 }

@@ -20,6 +20,8 @@ from rosetta.app.main import REPO_ROOT, console_html
 from rosetta.app.settings import SettingsStore
 
 READY_TIMEOUT_S = 15.0
+SHELL_RENDERED = """(() => { const app = document.querySelector("rp-app"); const root = app && app.shadowRoot;
+  return !!(root && root.querySelector("rp-plate") && root.querySelector("rp-menubar")); })()"""
 
 
 class _NoPlotter:
@@ -81,7 +83,8 @@ def check_page() -> bool:
             while time.monotonic() < deadline and not seen.get("ready"):
                 seen["ready"] = window.evaluate_js("window.rosettaReady === true")
                 time.sleep(0.25)
-            seen["shell"] = window.evaluate_js("document.querySelector('rp-app') !== null")
+            # True only when the window's parts actually rendered inside rp-app's shadow DOM.
+            seen["shell"] = window.evaluate_js(SHELL_RENDERED)
             seen["text"] = window.evaluate_js("document.body.innerText.slice(0, 120)")
         finally:
             window.destroy()

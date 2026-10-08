@@ -5,7 +5,7 @@
 import { BridgeError, type Client } from "../bridge/client";
 import type { MachineStatus, PlacementData, PlotStatus } from "../bridge/contract";
 import { MAX_SCALE, pieceBox, resizeBox, rotateAboutCenter, type Point } from "../geometry/placement";
-import type { Units } from "../geometry/units";
+import { formatLength, type Units } from "../geometry/units";
 import { disabledReason, type Control } from "../state/reasons";
 import { jobOf, pieceBoxOnPaper, plotRunning, selectedPieces, selectionBox } from "../state/selectors";
 import { Store, type AppState, type Notice, type Tool, type ViewOptions } from "../state/store";
@@ -15,6 +15,9 @@ export const STRETCH_TURNED = "Use W% and H% to stretch a turned drawing.";
 export const TOO_BIG = "Drawings can be scaled up to 10000%.";
 const RUNNING = "A plot is running.";
 const NO_ROOM = "The margins leave no room on this paper.";
+const OLD_FIRMWARE = "This plotter's firmware is old. You'll be asked for the model on each laptop.";
+const MAX_MARGIN_MM = 50;
+const MAX_PAPER_MM = 2000;
 const INFO_MS = 8000;
 const DROP_MEMORY_MS = 3000;
 
@@ -48,6 +51,8 @@ export class App {
   /** The newest placement still to be sent, per piece; only that one goes when the previous reply is in. */
   private readonly wanted = new Map<string, PlacementData>();
   private readonly sending = new Map<string, Promise<void>>();
+  /** The old-firmware notice is said once per session. */
+  private oldFirmwareSaid = false;
 
   constructor(
     readonly store: Store<AppState>,
@@ -160,6 +165,10 @@ export class App {
 
   setMachine(machine: MachineStatus): void {
     this.store.update((s) => ({ machine, homing: s.homing && machine.state === "not_homed" }));
+    if (machine.old_firmware && !this.oldFirmwareSaid) {
+      this.oldFirmwareSaid = true;
+      this.notify({ kind: "info", message: OLD_FIRMWARE });
+    }
   }
 
   /** Look for the plotter. No plotter is normal, so this never shows a problem. */
@@ -174,12 +183,15 @@ export class App {
   async identify(model: number, penlift: number, label: string): Promise<void> {
     if (!(await this.plotterAction(() => this.client.hardware("plotter_identify", model, penlift, label)))) return;
     this.store.update({ dialog: null });
-    const machine = this.state.machine;
+    this.refreshColors();
+    // The plotter keeps the label in its nickname, which may be shorter than what was typed.
+    const stored = this.state.machine.label ?? label;
+    const shortened = stored !== label.trim() ? " (the plotter keeps a shorter name)" : "";
     this.notify({
       kind: "info",
-      message: machine.old_firmware
+      message: this.state.machine.old_firmware
         ? "Saved on this laptop. This plotter's firmware is old, so other laptops will ask for its model too."
-        : `Saved. This plotter is now named "${machine.nickname ?? label}".`,
+        : `Saved. This plotter is now named "${stored}"${shortened}.`,
     });
   }
 
@@ -298,6 +310,12 @@ export class App {
     customWidth: number | null = null,
     customHeight: number | null = null,
   ): Promise<void> {
+    if (size === "custom") {
+      const usable = (v: number | null) => v !== null && Number.isFinite(v) && v > 0 && v <= MAX_PAPER_MM;
+      if (!usable(customWidth) || !usable(customHeight)) {
+        return this.explain(`Paper width and height must be above 0 and at most ${formatLength(MAX_PAPER_MM, this.state.units, true)}.`);
+      }
+    }
     const { x, y } = this.state.material;
     const reply = await this.attempt(() => this.client.call("material_set", size, orientation, customWidth, customHeight, x, y));
     if (!reply) return;
@@ -311,6 +329,7 @@ export class App {
         custom_height_mm: custom ? reply.material.height : null,
       },
     });
+    this.refreshColors();
   }
 
   /** The orientation buttons swap the paper's sides; the drawings stay where they are. */
@@ -326,16 +345,23 @@ export class App {
     const reply = await this.attempt(() =>
       this.client.call("material_set", p.size, p.orientation, p.custom_width_mm, p.custom_height_mm, x, y),
     );
-    if (reply) this.store.update({ material: reply.material });
+    if (!reply) return;
+    this.store.update({ material: reply.material });
+    this.refreshColors();
   }
 
   async markCorner(): Promise<void> {
     if (this.blocked("markCorner")) return;
     const reply = await this.attempt(() => this.client.call("material_mark_corner"));
-    if (reply) this.store.update({ material: reply.material });
+    if (!reply) return;
+    this.store.update({ material: reply.material });
+    this.refreshColors();
   }
 
   async setMargin(margin: number): Promise<void> {
+    if (!(margin >= 0 && margin <= MAX_MARGIN_MM)) {
+      return this.explain(`The margin must be from 0 to ${formatLength(MAX_MARGIN_MM, this.state.units, true)}.`);
+    }
     const reply = await this.attempt(() => this.client.call("set_margin", margin));
     if (reply) this.store.update({ margin: reply.margin_mm });
   }

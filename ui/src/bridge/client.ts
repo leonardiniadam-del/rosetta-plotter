@@ -76,25 +76,29 @@ type PyWindow = Window & {
   rosettaEvent?: (name: string, data: unknown) => void;
 };
 
+function filled(api: Api | undefined): api is Api {
+  // pywebview fills window.pywebview.api in two steps: wait until the methods are there.
+  return !!api && typeof (api as unknown as { app_start?: unknown }).app_start === "function";
+}
+
 /** The real bridge, once pywebview has injected it. Rejects after timeoutMs (in a plain browser, say). */
 export function waitForApi(timeoutMs: number): Promise<Api> {
   const w = window as PyWindow;
   return new Promise((resolve, reject) => {
-    if (w.pywebview?.api) {
-      resolve(w.pywebview.api);
-      return;
-    }
-    const timer = window.setTimeout(() => reject(new Error("The app's Python side didn't answer.")), timeoutMs);
-    window.addEventListener(
-      "pywebviewready",
-      () => {
-        window.clearTimeout(timer);
-        if (w.pywebview?.api) resolve(w.pywebview.api);
-        else reject(new Error("The app's Python side didn't answer."));
-      },
-      { once: true },
-    );
+    const started = Date.now();
+    const look = () => {
+      const api = w.pywebview?.api;
+      if (filled(api)) resolve(api);
+      else if (Date.now() - started >= timeoutMs) reject(new Error("The app's Python side didn't answer."));
+      else window.setTimeout(look, 50);
+    };
+    look();
   });
+}
+
+/** Is this page inside the app's window (pywebview), rather than a plain browser? */
+export function insideApp(): boolean {
+  return "pywebview" in window;
 }
 
 /** Python calls window.rosettaEvent(name, data): plot states, progress, dropped files, closing mid-plot. */

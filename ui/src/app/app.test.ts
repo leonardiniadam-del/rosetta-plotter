@@ -184,6 +184,49 @@ describe("App", () => {
     expect(app.state.notice?.message).toContain("In Affinity");
   });
 
+  it("refreshes the pen colors after the paper changes", async () => {
+    const { app, fake } = await withOneJob();
+    await settle();
+    const before = fake.called("job_colors").length;
+    await app.setPaper("a4", "landscape");
+    await settle();
+    expect(fake.called("job_colors").length).toBeGreaterThan(before);
+  });
+
+  it("names the plotter by its stored label, and says if the plotter shortened it", async () => {
+    const { app } = await startApp();
+    await app.identify(5, 1, "PSU Lab");
+    expect(app.state.notice?.message).toBe('Saved. This plotter is now named "PSU Lab".');
+    await app.identify(5, 1, "Portland State Univ.");
+    expect(app.state.notice?.message).toBe('Saved. This plotter is now named "Portland State U" (the plotter keeps a shorter name).');
+  });
+
+  it("says once when the plotter's firmware is old", async () => {
+    const { app, fake } = await startApp();
+    fake.oldFirmware = true;
+    await app.scan();
+    await app.scan();
+    expect(app.state.notice?.message).toBe("This plotter's firmware is old. You'll be asked for the model on each laptop.");
+    app.dismissNotice();
+    await app.scan();
+    expect(app.state.notice).toBeNull();
+  });
+
+  it("checks the margin in the student's units before asking Python", async () => {
+    const { app, fake } = await startApp();
+    await app.setMargin(60);
+    expect(fake.called("set_margin")).toEqual([]);
+    expect(app.state.notice?.message).toBe("The margin must be from 0 to 1.97 in.");
+  });
+
+  it("checks a custom paper size before asking Python", async () => {
+    const { app, fake } = await startApp();
+    await app.setUnits("cm");
+    await app.setPaper("custom", "landscape", 2500, 300);
+    expect(fake.called("material_set")).toEqual([]);
+    expect(app.state.notice?.message).toBe("Paper width and height must be above 0 and at most 200.00 cm.");
+  });
+
   it("falls back to a dialog when the clipboard is unavailable", async () => {
     const { app } = await startApp();
     await app.copyDiagnostics();

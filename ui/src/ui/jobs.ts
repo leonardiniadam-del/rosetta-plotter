@@ -80,7 +80,7 @@ export class RpJobs extends AppElement {
         border: none;
         border-radius: 0;
       }
-      .menu button:hover:not(:disabled) {
+      .menu button:hover:not([aria-disabled="true"]) {
         background: var(--accent);
         color: #fff;
       }
@@ -125,9 +125,15 @@ export class RpJobs extends AppElement {
       role="button"
       tabindex="0"
       draggable="true"
-      title=${`${job.name}: double-click, or drag onto the paper, to place it`}
+      title=${`${job.name}: double-click, or drag onto the paper, to place it. Delete removes it from the list.`}
       @dblclick=${() => this.app.placeJob(job.id)}
-      @keydown=${(e: KeyboardEvent) => e.key === "Enter" && this.app.placeJob(job.id)}
+      @keydown=${(e: KeyboardEvent) => {
+        if (e.key === "Enter") void this.app.placeJob(job.id);
+        else if (e.key === "Delete") {
+          e.stopPropagation(); // not the page's Delete (drawings on the paper)
+          this.app.removeJob(job.id);
+        }
+      }}
       @dragstart=${(e: DragEvent) => {
         e.dataTransfer?.setData(JOB_MIME, job.id);
         if (e.dataTransfer) e.dataTransfer.effectAllowed = "copy";
@@ -155,8 +161,13 @@ export class RpJobs extends AppElement {
       <button role="menuitem" @click=${choose(() => this.app.removeJob(job.id))}>Remove from list</button>
       <button
         role="menuitem"
-        ?disabled=${job.issues.length === 0}
-        @click=${choose(() => this.app.notify({ kind: "warning", message: job.issues.map((i) => i.message).join(" ") }))}
+        aria-disabled=${job.issues.length === 0 ? "true" : "false"}
+        title=${job.issues.length === 0 ? "This file has no issues." : ""}
+        @click=${choose(() =>
+          job.issues.length === 0
+            ? this.app.explain("This file has no issues.")
+            : this.app.notify({ kind: "warning", message: job.issues.map((i) => i.message).join(" ") }),
+        )}
       >Show issues</button>
     </div>`;
   }

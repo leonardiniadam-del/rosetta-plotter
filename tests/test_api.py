@@ -283,6 +283,13 @@ def test_rotate_paper_turns_the_layout_and_remembers_the_orientation(tmp_path):
     assert SettingsStore(tmp_path / "settings.json").settings.paper.orientation == "portrait"
 
 
+def test_rotating_custom_paper_flips_its_orientation(tmp_path):
+    api, _sink = make_api(tmp_path)
+    ok(api.material_set("custom", "landscape", 500, 300))
+    reply = ok(api.paper_rotate())
+    assert reply["paper"] == {"size": "custom", "orientation": "portrait", "custom_width_mm": 300, "custom_height_mm": 500}
+
+
 def test_centimetres_are_a_unit(tmp_path):
     api, _sink = make_api(tmp_path)
     ok(api.set_units("cm"))

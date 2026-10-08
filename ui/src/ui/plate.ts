@@ -166,6 +166,7 @@ export class RpPlate extends AppElement {
     this.app.viewRequests.addEventListener("view", this.onViewRequest);
     window.addEventListener("keydown", this.onSpace);
     window.addEventListener("keyup", this.onSpace);
+    window.addEventListener("blur", this.releaseSpace);
     if (typeof ResizeObserver !== "undefined") {
       this.observer = new ResizeObserver(() => this.measure());
       this.observer.observe(this);
@@ -176,6 +177,7 @@ export class RpPlate extends AppElement {
     this.app.viewRequests.removeEventListener("view", this.onViewRequest);
     window.removeEventListener("keydown", this.onSpace);
     window.removeEventListener("keyup", this.onSpace);
+    window.removeEventListener("blur", this.releaseSpace);
     this.observer?.disconnect();
     this.observer = null;
     super.disconnectedCallback();
@@ -241,6 +243,13 @@ export class RpPlate extends AppElement {
       this.spaceHeld = held;
       this.requestUpdate();
     }
+  };
+
+  /** Alt-Tab while holding Space: the keyup goes to the other window, so let go of the Hand here. */
+  private releaseSpace = (): void => {
+    if (!this.spaceHeld) return;
+    this.spaceHeld = false;
+    this.requestUpdate();
   };
 
   private activeTool(): Tool {

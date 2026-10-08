@@ -87,6 +87,26 @@ describe("control bar, a drawing selected", () => {
     expect(app.state.pieces[0].placement.rotation).toBe(90);
   });
 
+  it("with the link on, editing W% of a stretched drawing scales both", async () => {
+    const { app, root } = await selected();
+    await app.setScale(1, 2); // stretched: W% 100, H% 200
+    await (root.host as RpControlbarLike).updateComplete;
+    commit(field(root, "W%"), 2);
+    await settle();
+    const p = app.state.pieces[0].placement;
+    expect([p.scale, p.scale_y]).toEqual([2, 4]);
+  });
+
+  it("with the link on, editing H% of a stretched drawing scales both", async () => {
+    const { app, root } = await selected();
+    await app.setScale(1, 2);
+    await (root.host as RpControlbarLike).updateComplete;
+    commit(field(root, "H%"), 1);
+    await settle();
+    const p = app.state.pieces[0].placement;
+    expect([p.scale, p.scale_y]).toEqual([0.5, 1]);
+  });
+
   it("locks the drawing's numbers while a plot runs", async () => {
     const { app, root } = await selected();
     app.onEvent("plot_state", { ...app.state.plot, state: "plotting" });

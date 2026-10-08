@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { BridgeError, Client, listenForEvents, waitForApi } from "./client";
+import { BridgeError, Client, insideApp, listenForEvents, waitForApi } from "./client";
 import type { Api } from "./contract";
 
 type Global = Window & { pywebview?: unknown; rosettaEvent?: (name: string, data: unknown) => void };
@@ -77,12 +77,28 @@ describe("window bridge", () => {
     delete (window as Global).pywebview;
   });
 
-  it("waits for pywebviewready", async () => {
-    const api = {} as Api;
+  it("finds the bridge once pywebview injects it", async () => {
+    const api = { app_start: () => undefined } as unknown as Api;
     const pending = waitForApi(1000);
     (window as Global).pywebview = { api };
     window.dispatchEvent(new Event("pywebviewready"));
     await expect(pending).resolves.toBe(api);
+  });
+
+  it("waitForApi waits until the bridge has its methods", async () => {
+    const w = window as unknown as { pywebview?: { api?: object } };
+    w.pywebview = { api: {} };
+    const waiting = waitForApi(1000);
+    setTimeout(() => (w.pywebview = { api: { app_start: () => undefined } }), 60);
+    const api = await waiting;
+    expect(typeof (api as unknown as { app_start: unknown }).app_start).toBe("function");
+    delete w.pywebview;
+  });
+
+  it("tells the app's window from a plain browser", () => {
+    expect(insideApp()).toBe(false);
+    (window as Global).pywebview = {};
+    expect(insideApp()).toBe(true);
   });
 
   it("gives up after the timeout", async () => {

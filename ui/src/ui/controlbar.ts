@@ -88,9 +88,11 @@ export class RpControlbar extends AppElement {
       ${p
         ? twoScales
           ? html`<rp-field kind="percent" label="W%" .value=${p.scale} ?disabled=${!!locked} tip=${locked ?? "Scale along the drawing's width"}
-                @commit=${(e: Commit) => this.app.setScale(e.detail, p.scale_y)}></rp-field>
+                @commit=${(e: Commit) =>
+                  s.linkScale ? this.app.setScale(e.detail, p.scale_y * (e.detail / p.scale)) : this.app.setScale(e.detail, p.scale_y)}></rp-field>
               <rp-field kind="percent" label="H%" .value=${p.scale_y} ?disabled=${!!locked} tip=${locked ?? "Scale along the drawing's height"}
-                @commit=${(e: Commit) => this.app.setScale(p.scale, e.detail)}></rp-field>`
+                @commit=${(e: Commit) =>
+                  s.linkScale ? this.app.setScale(p.scale * (e.detail / p.scale_y), e.detail) : this.app.setScale(p.scale, e.detail)}></rp-field>`
           : html`<rp-field kind="percent" label="Scale" .value=${p.scale} ?disabled=${!!locked} tip=${locked ?? "Scale, keeping proportions"}
               @commit=${(e: Commit) => this.app.setScale(e.detail, e.detail)}></rp-field>`
         : nothing}

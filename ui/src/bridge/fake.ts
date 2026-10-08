@@ -85,11 +85,15 @@ export class FakeApi implements Api {
   plugged = true;
   powered = true;
   model: number | null = 5;
+  /** Test knob: the plotter's firmware is too old to store its model in its nickname. */
+  oldFirmware = false;
   /** Every call in order, as [method, args]. */
   readonly calls: [string, unknown[]][] = [];
 
   private connected = false;
   private homed = false;
+  /** The label kept in the plotter's nickname (null: the demo's own). */
+  private labelStored: string | null = null;
   private position: [number, number] = [0, 0];
   private penDown = 30;
   private penType = "fineliner";
@@ -151,9 +155,9 @@ export class FakeApi implements Api {
       model: model ? model.number : null,
       model_name: model ? model.name : null,
       penlift: model ? 1 : null,
-      label: model ? "Demo" : null,
+      label: model ? (this.labelStored ?? "Demo") : null,
       nickname: model ? `Demo m${model.number}p1` : null,
-      old_firmware: false,
+      old_firmware: this.connected && this.oldFirmware,
       position: state === "ready" ? [this.position[0], this.position[1]] : null,
       pen_down: this.penDown,
       pen_type: this.penType,
@@ -225,6 +229,7 @@ export class FakeApi implements Api {
     this.log("plotter_identify", [model, penlift, label]);
     if (!this.connected) return fail(NOT_CONNECTED);
     this.model = model;
+    this.labelStored = label.slice(0, 16); // a stand-in for the plotter's shorter limit
     return ok({ machine: this.status() });
   }
 
@@ -414,11 +419,14 @@ export class FakeApi implements Api {
         rotation: normalizeAngle(piece.placement.rotation + 90),
       };
     }
-    if (this.paper.size === "custom") {
-      this.paper = { ...this.paper, custom_width_mm: this.material.width, custom_height_mm: this.material.height };
-    } else {
-      this.paper = { ...this.paper, orientation: this.paper.orientation === "landscape" ? "portrait" : "landscape" };
-    }
+    const flipped = this.paper.orientation === "landscape" ? "portrait" : "landscape";
+    const custom = this.paper.size === "custom";
+    this.paper = {
+      ...this.paper,
+      orientation: flipped,
+      custom_width_mm: custom ? this.material.width : null,
+      custom_height_mm: custom ? this.material.height : null,
+    };
     return ok({
       material: this.materialInfo(),
       paper: { ...this.paper },

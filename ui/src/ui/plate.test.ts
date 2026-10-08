@@ -180,6 +180,17 @@ describe("rp-plate", () => {
     expect(plate.dataset.tool).toBe("hand");
   });
 
+  it("lets go of a held Space when the window loses focus (Alt-Tab)", async () => {
+    const { plate } = await plateWithJob();
+    plate.focus();
+    plate.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", cancelable: true, bubbles: true, composed: true }));
+    await plate.updateComplete;
+    expect(plate.dataset.tool).toBe("hand");
+    window.dispatchEvent(new Event("blur")); // the keyup goes to the other window
+    await plate.updateComplete;
+    expect(plate.dataset.tool).not.toBe("hand");
+  });
+
   it("draws the red pass only through a mask that hides the printable paper", async () => {
     const { root } = await plateWithJob();
     expect(root.querySelector("mask#off-paper")).not.toBeNull();

@@ -333,10 +333,10 @@ class Api:
         material = self._session.material
         with self._store.change() as settings:
             paper = settings.paper
+            flipped = "portrait" if paper.orientation == "landscape" else "landscape"
             if paper.size == CUSTOM:
-                settings.paper = PaperChoice(CUSTOM, paper.orientation, material.width, material.height)
+                settings.paper = PaperChoice(CUSTOM, flipped, material.width, material.height)
             else:
-                flipped = "portrait" if paper.orientation == "landscape" else "landscape"
                 settings.paper = PaperChoice(paper.size, flipped)
             choice = dataclasses.asdict(settings.paper)
         self._plot.invalidate()

@@ -33,6 +33,30 @@ describe("Jobs panel", () => {
     await settle();
     expect(fake.called("job_remove")).toEqual([["job-1"]]); // no copies, so no question
   });
+
+  it("Show issues explains when a file has none", async () => {
+    const { app } = await startApp();
+    await app.importFiles();
+    const root = shadow(await mount("rp-jobs"));
+    root.querySelector(".row")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    await settle();
+    const show = Array.from(root.querySelectorAll('[role="menuitem"]')).find((b) => b.textContent === "Show issues") as HTMLButtonElement;
+    expect([show.disabled, show.getAttribute("aria-disabled")]).toEqual([false, "true"]);
+    show.click();
+    await settle();
+    expect(app.state.notice?.message).toBe("This file has no issues.");
+  });
+
+  it("Delete on a focused job row removes it", async () => {
+    const { app } = await startApp();
+    await app.importFiles();
+    const jobs = await mount<HTMLElement & { updateComplete: Promise<unknown> }>("rp-jobs");
+    await jobs.updateComplete;
+    const row = shadow(jobs).querySelector(".row") as HTMLElement;
+    row.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    await settle();
+    expect(app.state.jobs).toEqual([]);
+  });
 });
 
 describe("Pens panel", () => {

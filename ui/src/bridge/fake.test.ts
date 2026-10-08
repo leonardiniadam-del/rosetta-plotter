@@ -49,6 +49,13 @@ describe("FakeApi", () => {
     expect(reply.pieces[0].placement).toMatchObject({ x: 215.9 - 20 - 80, y: 10, rotation: 90 });
   });
 
+  it("rotating custom paper flips its orientation", async () => {
+    const fake = new FakeApi();
+    await fake.material_set("custom", "landscape", 500, 300, 0, 0);
+    const reply = await fake.paper_rotate();
+    expect(reply.ok && reply.paper).toEqual({ size: "custom", orientation: "portrait", custom_width_mm: 300, custom_height_mm: 500 });
+  });
+
   it("numbers only the visible pens", async () => {
     const { client } = setup();
     const { job } = await client.call("job_import", "C:\\art\\site.svg", 0);
