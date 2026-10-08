@@ -24,7 +24,7 @@ The student page talks to Python through pywebview's `js_api`, the `Api` class i
 ### App
 | Method | Arguments | Reply |
 |---|---|---|
-| `app_start()` | | `version`, `settings` {units, margin_mm, paper, advanced}, `models` [{number, name, travel}], `pen_types` [{key, label, speed}], `papers` [{key, label, short_mm, long_mm}], `advanced_options` {labels, ranges, choices}, `pen_down_max`, `machine`, `material`, `plot` |
+| `app_start()` | | `version`, `settings` {units, margin_mm, paper, advanced}, `models` [{number, name, travel}], `pen_types` [{key, label, speed}], `papers` [{key, label, short_mm, long_mm}], `advanced_options` {labels, ranges, choices, defaults}, `pen_down_max`, `machine`, `material`, `plot` |
 | `set_units(units)` | `"in"`, `"mm"` or `"cm"` | |
 | `set_advanced(values)` | {option: value}, only the options that changed (the rest keep their values); `null` means automatic for `pen_up` and `speed_pendown` | `advanced` (all options) |
 | `diagnostics()` | | `text` for Copy diagnostics |
@@ -68,7 +68,7 @@ While a plot is under way (`machine.state` is `plotting`), every call here that 
 | `paper_rotate()` | | `material`, `paper` (the saved choice), `pieces` (all, turned with the paper) |
 | `set_pen_visible(color, visible)` | `#rrggbb` | `hidden` (the hidden colors) |
 | `set_skip_white(skip)` | | `skip_white` |
-| `job_colors()` | | `colors` [{layer, color, name, lines, visible}] (`layer` is null for hidden pens), `ink_bbox`, `clipped`, `empty` |
+| `job_colors()` | | `colors` [{layer, color, name, lines, visible}] (`layer` is null for hidden pens), `ink_bbox`, `clipped`, `empty` (`ink_bbox`, `clipped` and `empty` count hidden pens too; the plot leaves them out) |
 | `new_plot()` | | clears the paper; the Jobs list stays (refused mid-plot) |
 
 ### Plot (Step 5)

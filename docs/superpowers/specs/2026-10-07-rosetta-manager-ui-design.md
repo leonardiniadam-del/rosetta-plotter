@@ -3,6 +3,7 @@
 **Date:** 2026-10-07
 **Author:** Adam Leonardini (research assistant), with Claude
 **Status:** Design approved in conversation, pending written-spec review
+**Built:** Plan 2b-1 (the window) and Plan 2b-2 (plotting, Preview path, Settings). **Plan 2b-3:** snapping, undo/redo, rulers, group scale/rotate, dock resizing, Quick Start.
 **Supersedes:** in `2026-10-03-rosetta-plotter-design.md`, §5 (the guided five-step flow) and the UI parts of §6.5 (step bar, Fluent UI). Everything else in that spec still stands: architecture, coordinates, engine rules, translate pipeline, problem checker, identity, error handling and testing.
 **Builds on:** the Python app layer from Plan 2a and its contract in `docs/bridge.md`.
 
@@ -231,7 +232,7 @@ From left to right:
   - units (in / mm);
   - margin;
   - grid on/off;
-  - snapping on/off and snap distance;
+  - snapping on/off and snap distance (snapping options arrive with snapping, Plan 2b-3);
   - skip white shapes (on by default, spec §6.3).
 - **Advanced:** the engine options from `app_start().advanced_options`:
   - pen-up height, with Automatic as an option;

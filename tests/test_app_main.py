@@ -57,3 +57,38 @@ def test_the_window_goes_back_to_the_app_page():
     window.url = "file:///C:/Users/student/drawing.svg"
     guard.on_loaded()
     assert window.loaded == ["http://127.0.0.1:5000/index.html"]
+
+
+def test_the_window_is_taken_back_only_three_times_in_a_row(caplog):
+    window = _Window()
+    guard = main.AppPageGuard(window)
+    window.url = "http://127.0.0.1:5000/index.html"
+    guard.on_loaded()
+    # The app's page itself fails to load, so every take-back lands on an error page.
+    window.url = "chrome-error://chromewebdata/"
+    with caplog.at_level("WARNING", logger=main.logger.name):
+        for _ in range(6):
+            guard.on_loaded()
+    assert window.loaded == ["http://127.0.0.1:5000/index.html"] * 3
+    stopped = [r for r in caplog.records if "giving up" in r.getMessage()]
+    assert len(stopped) == 1
+
+
+def test_a_good_load_of_the_app_page_resets_the_take_back_count():
+    window = _Window()
+    guard = main.AppPageGuard(window)
+    home = "http://127.0.0.1:5000/index.html"
+    window.url = home
+    guard.on_loaded()
+    for _ in range(2):
+        window.url = "file:///C:/Users/student/drawing.svg"
+        guard.on_loaded()
+    window.url = home
+    guard.on_loaded()  # the take-back worked
+    for _ in range(3):
+        window.url = "file:///C:/Users/student/drawing.svg"
+        guard.on_loaded()
+    assert window.loaded == [home] * 5
+    window.url = "file:///C:/Users/student/drawing.svg"
+    guard.on_loaded()
+    assert window.loaded == [home] * 5

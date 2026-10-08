@@ -69,6 +69,9 @@ def _accept_dropped_files(window, api: Api) -> None:
     document.events.drop += DOMEventHandler(on_drop, True, True)
 
 
+MAX_TAKEBACKS = 3  # in a row, without the app's page loading in between
+
+
 class AppPageGuard:
     """pywebview hands the bridge (js_api) to any page the window shows. If the window ever leaves the
     app's own page (a link, or a file dropped where nothing catches it), take it back
@@ -77,6 +80,7 @@ class AppPageGuard:
     def __init__(self, window):
         self._window = window
         self._home: str | None = None
+        self._takebacks = 0
 
     def on_loaded(self) -> None:
         url = self._window.get_current_url()
@@ -85,9 +89,17 @@ class AppPageGuard:
         page = url.split("#")[0].split("?")[0]
         if self._home is None:
             self._home = page
-        elif page != self._home:
+        elif page == self._home:
+            self._takebacks = 0
+        elif self._takebacks < MAX_TAKEBACKS:
+            self._takebacks += 1
             logger.warning("The window left the app's page for %s; going back", url)
             self._window.load_url(self._home)
+        elif self._takebacks == MAX_TAKEBACKS:
+            self._takebacks += 1  # so the warning below is logged once
+            logger.warning(
+                "The window left the app's page for %s after %d take-backs in a row; giving up", url, MAX_TAKEBACKS
+            )
 
 
 def main() -> int:

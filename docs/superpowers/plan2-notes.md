@@ -27,7 +27,7 @@ These came out of the code reviews while building the core (Plan 1). Each one is
 
 ## For Plan 2b (from the Plan 2a final review)
 Left as they are on purpose. The page-facing rules are in docs/bridge.md.
-- **Lock navigation in the WebView.** pywebview injects `js_api` into any page the window navigates to. Keep the window on the app's own page and open every outside link in the system browser.
+- **Lock navigation in the WebView.** Done in Plan 2b-2: `main.AppPageGuard` takes the window back to the app's page. (Original note: pywebview injects `js_api` into any page the window navigates to. Keep the window on the app's own page and open every outside link in the system browser.)
 - **Drag and drop isn't smoke-tested.** `scripts/smoke_window.py` doesn't cover dropping files on the window; check it by hand.
 - **Size messages are in mm.** Messages from Python name sizes in mm (custom paper "between 0 and 2000 mm", margin "from 0 to 50 mm"). The page should check what the student types in their own units first, so they rarely see these.
 - **Error recovery could be finer later.**
