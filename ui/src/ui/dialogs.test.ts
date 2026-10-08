@@ -127,3 +127,123 @@ describe("plot dialogs", () => {
     expect(ran).toBe(true);
   });
 });
+
+describe("Settings", () => {
+  async function openSettings() {
+    const started = await startApp();
+    const dialogs = await mount<Lit>("rp-dialogs");
+    started.app.openSettings();
+    await dialogs.updateComplete;
+    return { ...started, dialogs, root: shadow(dialogs) };
+  }
+
+  function tab(root: ShadowRoot, name: string) {
+    (Array.from(root.querySelectorAll('[role="tab"]')).find((b) => b.textContent?.trim() === name) as HTMLButtonElement).click();
+  }
+
+  it("General applies at once: skip white shapes", async () => {
+    const { fake, root } = await openSettings();
+    const skip = root.querySelector("#skip-white") as HTMLInputElement;
+    skip.checked = false;
+    skip.dispatchEvent(new Event("change"));
+    await settle();
+    expect(fake.called("set_skip_white")).toEqual([[false]]);
+  });
+
+  it("General applies at once: units and the grid", async () => {
+    const { app, fake, root } = await openSettings();
+    const units = root.querySelector("#units") as HTMLSelectElement;
+    units.value = "mm";
+    units.dispatchEvent(new Event("change"));
+    await settle();
+    expect(fake.called("set_units")).toEqual([["mm"]]);
+    expect(app.state.units).toBe("mm");
+    const grid = root.querySelector("#grid") as HTMLInputElement;
+    grid.checked = false;
+    grid.dispatchEvent(new Event("change"));
+    expect(app.state.view.grid).toBe(false);
+  });
+
+  it("Advanced sends only what changed, after checking it", async () => {
+    const { app, fake, dialogs, root } = await openSettings();
+    tab(root, "Advanced");
+    await dialogs.updateComplete;
+    const accel = root.querySelector("#adv-accel") as HTMLInputElement;
+    accel.value = "500";
+    accel.dispatchEvent(new Event("change"));
+    await dialogs.updateComplete;
+    (root.querySelector("button.primary") as HTMLButtonElement).click();
+    await dialogs.updateComplete;
+    expect(root.querySelector(".hint")?.textContent).toBe("Acceleration must be from 1 to 100.");
+    expect(fake.called("set_advanced")).toEqual([]);
+    accel.value = "60";
+    accel.dispatchEvent(new Event("change"));
+    await dialogs.updateComplete;
+    (root.querySelector("button.primary") as HTMLButtonElement).click();
+    await settle();
+    expect(fake.called("set_advanced")).toEqual([[{ accel: 60 }]]);
+    expect(app.state.advanced.accel).toBe(60);
+    expect(app.state.dialog).toBeNull();
+  });
+
+  it("Enter in a number box saves what was just typed", async () => {
+    const { app, fake, dialogs, root } = await openSettings();
+    tab(root, "Advanced");
+    await dialogs.updateComplete;
+    const accel = root.querySelector("#adv-accel") as HTMLInputElement;
+    accel.focus();
+    accel.value = "60";
+    accel.dispatchEvent(new Event("input")); // typing; the browser's change event comes after Enter
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    await settle();
+    expect(fake.called("set_advanced")).toEqual([[{ accel: 60 }]]);
+    expect(app.state.dialog).toBeNull();
+  });
+
+  it("shows Python's message when it refuses the options, and keeps the dialog open", async () => {
+    const { app, fake, dialogs, root } = await openSettings();
+    tab(root, "Advanced");
+    await dialogs.updateComplete;
+    const penUp = root.querySelector("#adv-pen_up") as HTMLInputElement;
+    expect(penUp.disabled).toBe(true); // Automatic
+    const automatic = root.querySelector("#adv-pen_up ~ label input") as HTMLInputElement;
+    automatic.checked = false;
+    automatic.dispatchEvent(new Event("change"));
+    await dialogs.updateComplete;
+    penUp.value = "35";
+    penUp.dispatchEvent(new Event("change"));
+    await dialogs.updateComplete;
+    (root.querySelector("button.primary") as HTMLButtonElement).click();
+    await settle();
+    await dialogs.updateComplete;
+    expect(fake.called("set_advanced")).toEqual([[{ pen_up: 35 }]]);
+    expect(root.querySelector(".hint")?.textContent).toBe("Pen-up height must be at least 10 above the pen-down height (30).");
+    expect(app.state.dialog?.kind).toBe("settings");
+    expect(app.state.advanced.pen_up).toBeNull();
+  });
+
+  it("Restore defaults puts every option back", async () => {
+    const { app, fake, dialogs, root } = await openSettings();
+    await app.setAdvanced({ accel: 60, hiding: true });
+    tab(root, "Advanced");
+    await dialogs.updateComplete;
+    (Array.from(root.querySelectorAll("button")).find((b) => b.textContent?.trim() === "Restore defaults") as HTMLButtonElement).click();
+    await dialogs.updateComplete;
+    (root.querySelector("button.primary") as HTMLButtonElement).click();
+    await settle();
+    expect(fake.called("set_advanced").at(-1)).toEqual([{ accel: 75, hiding: false }]);
+  });
+
+  it("Cancel on Advanced sends nothing", async () => {
+    const { app, fake, dialogs, root } = await openSettings();
+    tab(root, "Advanced");
+    await dialogs.updateComplete;
+    const accel = root.querySelector("#adv-accel") as HTMLInputElement;
+    accel.value = "60";
+    accel.dispatchEvent(new Event("change"));
+    (Array.from(root.querySelectorAll("button")).find((b) => b.textContent?.trim() === "Cancel") as HTMLButtonElement).click();
+    await settle();
+    expect(fake.called("set_advanced")).toEqual([]);
+    expect(app.state.dialog).toBeNull();
+  });
+});

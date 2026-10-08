@@ -1,15 +1,25 @@
 /** The few dialogs: page picker, plotter model, text (diagnostics), shortcuts and About. Esc cancels. */
 import { css, html, nothing } from "lit";
+import { live } from "lit/directives/live.js";
 import { SHORTCUT_HELP } from "../app/shortcut-help";
-import { formatLength } from "../geometry/units";
+import type { AdvancedValues } from "../bridge/contract";
+import { formatLength, UNITS, UNIT_NAMES, type Units } from "../geometry/units";
+import { AUTOMATIC, CHOICE_LABELS, MANUAL_START, changedAdvanced, checkAdvanced } from "../state/advanced";
 import type { Dialog } from "../state/store";
 import { AppElement } from "./base";
+import "./field";
 import { controls } from "./styles";
 
 const MODEL_FIRST = "Choose the model on the plotter's label first.";
 
 export class RpDialogs extends AppElement {
-  static properties = { chosen: { state: true }, hint: { state: true } };
+  static properties = {
+    chosen: { state: true },
+    hint: { state: true },
+    tab: { state: true },
+    draft: { state: true },
+    problem: { state: true },
+  };
 
   static styles = [
     controls,
@@ -77,6 +87,34 @@ export class RpDialogs extends AppElement {
       .hint {
         color: var(--warning);
       }
+      .tabs {
+        display: flex;
+        gap: 4px;
+        border-bottom: 1px solid var(--line);
+      }
+      .tabs [role="tab"] {
+        border: none;
+        background: none;
+        border-bottom: 2px solid transparent;
+        border-radius: 0;
+      }
+      .tabs [aria-selected="true"] {
+        border-bottom-color: var(--accent);
+      }
+      .form {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 6px 12px;
+        align-items: center;
+      }
+      .inline {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .grow {
+        flex: 1;
+      }
       .pen {
         display: flex;
         gap: 12px;
@@ -94,12 +132,18 @@ export class RpDialogs extends AppElement {
 
   declare chosen: number | null;
   declare hint: string;
+  declare tab: "general" | "advanced";
+  declare draft: AdvancedValues;
+  declare problem: string;
   private lastDialog: unknown = null;
 
   constructor() {
     super();
     this.chosen = null;
     this.hint = "";
+    this.tab = "general";
+    this.draft = {};
+    this.problem = "";
   }
 
   connectedCallback(): void {
@@ -117,6 +161,11 @@ export class RpDialogs extends AppElement {
     if (dialog !== this.lastDialog && dialog?.kind === "model") {
       this.chosen = this.s.machine.model;
       this.hint = "";
+    }
+    if (dialog !== this.lastDialog && dialog?.kind === "settings") {
+      this.tab = "general";
+      this.draft = { ...this.s.advanced };
+      this.problem = "";
     }
   }
 
@@ -217,6 +266,8 @@ export class RpDialogs extends AppElement {
             <button @click=${() => this.app.closeDialog()}>${dialog.cancel}</button>
             <button class="primary" @click=${() => dialog.run()}>${dialog.confirm}</button>
           </div>`;
+      case "settings":
+        return this.settings();
       case "about":
         return html`<h2 id="title">Rosetta Plotter</h2>
           <p>Version ${this.s.start?.version ?? ""}</p>
@@ -226,6 +277,123 @@ export class RpDialogs extends AppElement {
           </p>
           ${this.close()}`;
     }
+  }
+
+  private settings() {
+    const s = this.s;
+    const tabs = html`<div class="tabs" role="tablist">
+      ${(["general", "advanced"] as const).map(
+        (name) => html`<button role="tab" aria-selected=${String(this.tab === name)} @click=${() => (this.tab = name)}>
+          ${name === "general" ? "General" : "Advanced"}
+        </button>`,
+      )}
+    </div>`;
+    if (this.tab === "general") {
+      return html`<h2 id="title">Settings</h2>
+        ${tabs}
+        <div class="form">
+          <label for="units">Units</label>
+          <select id="units" .value=${live(s.units)} @change=${(e: Event) => void this.app.setUnits((e.target as HTMLSelectElement).value as Units)}>
+            ${UNITS.map((u) => html`<option value=${u} ?selected=${u === s.units}>${UNIT_NAMES[u]}</option>`)}
+          </select>
+          <label>Margin</label>
+          <rp-field
+            label=""
+            .value=${s.margin}
+            .units=${s.units}
+            tip="Margin"
+            @commit=${(e: CustomEvent<number>) => void this.app.setMargin(e.detail)}
+          ></rp-field>
+          <label for="grid">Show grid</label>
+          <input id="grid" type="checkbox" .checked=${s.view.grid} @change=${() => this.app.toggleView("grid")} />
+          <label for="skip-white">Skip white shapes</label>
+          <input
+            id="skip-white"
+            type="checkbox"
+            .checked=${s.skipWhite}
+            @change=${(e: Event) => void this.app.setSkipWhite((e.target as HTMLInputElement).checked)}
+          />
+        </div>
+        <div class="buttons"><button class="primary" @click=${() => this.app.closeDialog()}>Close</button></div>`;
+    }
+    const options = s.start?.advanced_options;
+    const names = options ? Object.keys(options.labels) : [];
+    return html`<h2 id="title">Settings</h2>
+      ${tabs}
+      <p class="dim">These change how the plotter moves. Most students never need them.</p>
+      <div class="form">${names.map((name) => this.advancedRow(name))}</div>
+      ${this.problem ? html`<p class="hint" role="alert">${this.problem}</p>` : nothing}
+      <div class="buttons">
+        <button @click=${() => options && ((this.draft = { ...options.defaults }), (this.problem = ""))}>Restore defaults</button>
+        <span class="grow"></span>
+        <button @click=${() => this.app.closeDialog()}>Cancel</button>
+        <button class="primary" @click=${() => void this.saveAdvanced()}>Save</button>
+      </div>`;
+  }
+
+  private advancedRow(name: string) {
+    const options = this.s.start?.advanced_options;
+    if (!options) return nothing;
+    const label = options.labels[name];
+    const value = this.draft[name];
+    const id = `adv-${name}`;
+    const set = (next: number | boolean | null) => {
+      this.draft = { ...this.draft, [name]: next };
+      this.problem = "";
+    };
+    if (name === "hiding") {
+      return html`<label for=${id}>${label}</label>
+        <input id=${id} type="checkbox" .checked=${value === true} @change=${(e: Event) => set((e.target as HTMLInputElement).checked)} />`;
+    }
+    const choices = options.choices[name];
+    if (choices) {
+      return html`<label for=${id}>${label}</label>
+        <select id=${id} .value=${live(String(value))} @change=${(e: Event) => set(Number((e.target as HTMLSelectElement).value))}>
+          ${choices.map((c) => html`<option value=${c} ?selected=${c === value}>${CHOICE_LABELS[name]?.[c] ?? c}</option>`)}
+        </select>`;
+    }
+    const [low, high] = options.ranges[name] ?? [0, 100];
+    // "input" as well as "change": Enter saves before the browser sends "change", so the draft must already hold the typing.
+    const typed = (e: Event) => {
+      const text = (e.target as HTMLInputElement).value.trim();
+      set(text === "" ? Number.NaN : Number(text));
+    };
+    return html`<label for=${id}>${label}</label>
+      <span class="inline">
+        <input
+          id=${id}
+          type="number"
+          min=${low}
+          max=${high}
+          step="1"
+          ?disabled=${value === null}
+          .value=${live(typeof value === "number" && !Number.isNaN(value) ? String(value) : "")}
+          @input=${typed}
+          @change=${typed}
+        />
+        ${AUTOMATIC.includes(name)
+          ? html`<label
+              ><input
+                type="checkbox"
+                .checked=${value === null}
+                @change=${(e: Event) => set((e.target as HTMLInputElement).checked ? null : (MANUAL_START[name] ?? low))}
+              />Automatic</label
+            >`
+          : nothing}
+      </span>`;
+  }
+
+  private async saveAdvanced(): Promise<void> {
+    const options = this.s.start?.advanced_options;
+    if (!options) return;
+    const problem = checkAdvanced(this.draft, options);
+    if (problem) {
+      this.problem = problem;
+      return;
+    }
+    const refused = await this.app.setAdvanced(changedAdvanced(this.draft, this.s.advanced));
+    if (refused) this.problem = refused;
+    else this.app.closeDialog();
   }
 
   private modelForm() {

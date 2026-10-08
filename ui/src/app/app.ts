@@ -3,7 +3,7 @@
  * the strip, calls Python (plotter requests one at a time), and updates the store.
  */
 import { BridgeError, type Client } from "../bridge/client";
-import type { MachineStatus, PlacementData, PlotProgress, PlotStatus } from "../bridge/contract";
+import type { AdvancedValues, MachineStatus, PlacementData, PlotProgress, PlotStatus } from "../bridge/contract";
 import { MAX_SCALE, pieceBox, resizeBox, rotateAboutCenter, type Point } from "../geometry/placement";
 import { routeOf } from "../geometry/route";
 import { formatLength, type Units } from "../geometry/units";
@@ -321,6 +321,30 @@ export class App {
 
   closeDialog(): void {
     this.store.update({ dialog: null });
+  }
+
+  openSettings(): void {
+    this.store.update({ dialog: { kind: "settings" } });
+  }
+
+  async setSkipWhite(skip: boolean): Promise<void> {
+    this.store.update({ skipWhite: skip });
+    const reply = await this.attempt(() => this.client.call("set_skip_white", skip));
+    if (!reply) this.store.update({ skipWhite: !skip });
+    this.refreshColors();
+  }
+
+  /** Send the Advanced options that changed. Returns Python's message if it refused them (shown in the dialog). */
+  async setAdvanced(changes: AdvancedValues): Promise<string | null> {
+    if (Object.keys(changes).length === 0) return null;
+    try {
+      const reply = await this.client.call("set_advanced", changes);
+      this.store.update({ advanced: reply.advanced });
+      this.schedulePrepare();
+      return null;
+    } catch (error) {
+      return error instanceof BridgeError ? error.message : "Something unexpected went wrong.";
+    }
   }
 
   async copyDiagnostics(): Promise<void> {
