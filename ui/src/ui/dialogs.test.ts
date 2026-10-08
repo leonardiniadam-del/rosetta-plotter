@@ -246,4 +246,64 @@ describe("Settings", () => {
     expect(fake.called("set_advanced")).toEqual([]);
     expect(app.state.dialog).toBeNull();
   });
+  it("Enter and Esc in the margin box act on the box first", async () => {
+    const { app, fake, dialogs, root } = await openSettings();
+    const field = root.querySelector("rp-field") as HTMLElement;
+    const box = shadow(field).querySelector("input") as HTMLInputElement;
+    box.focus();
+    box.value = "0.5";
+    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, composed: true }));
+    await settle();
+    await dialogs.updateComplete;
+    expect(fake.called("set_margin").length).toBe(1);
+    expect(app.state.dialog?.kind).toBe("settings");
+    // Esc reverts the box and leaves the dialog open
+    box.focus();
+    box.value = "0.9";
+    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    await settle();
+    expect(fake.called("set_margin").length).toBe(1);
+    expect(app.state.dialog?.kind).toBe("settings");
+    // a second Esc, with focus no longer in the box, closes
+    (box as HTMLElement).blur();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await settle();
+    expect(app.state.dialog).toBeNull();
+  });
+
+  it("keeps the Advanced draft through a pen change", async () => {
+    const { app, dialogs, root } = await openSettings();
+    tab(root, "Advanced");
+    await dialogs.updateComplete;
+    const accel = root.querySelector("#adv-accel") as HTMLInputElement;
+    accel.value = "60";
+    accel.dispatchEvent(new Event("input"));
+    await dialogs.updateComplete;
+    app.store.update((s) => ({ plot: { ...s.plot, state: "load_pen" } }));
+    await dialogs.updateComplete;
+    app.store.update((s) => ({ plot: { ...s.plot, state: "plotting" } }));
+    await dialogs.updateComplete;
+    await dialogs.updateComplete;
+    expect(root.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim()).toBe("Advanced");
+    expect((root.querySelector("#adv-accel") as HTMLInputElement).value).toBe("60");
+  });
+
+  it("Save ignores a second click while the first is on its way", async () => {
+    const { fake, dialogs, root } = await openSettings();
+    tab(root, "Advanced");
+    await dialogs.updateComplete;
+    const accel = root.querySelector("#adv-accel") as HTMLInputElement;
+    accel.value = "60";
+    accel.dispatchEvent(new Event("input"));
+    await dialogs.updateComplete;
+    const release = fake.hold("set_advanced");
+    const save = root.querySelector("button.primary") as HTMLButtonElement;
+    save.click();
+    await dialogs.updateComplete;
+    expect(save.getAttribute("aria-disabled")).toBe("true");
+    save.click();
+    release();
+    await settle();
+    expect(fake.called("set_advanced").length).toBe(1);
+  });
 });

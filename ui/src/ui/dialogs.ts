@@ -19,6 +19,7 @@ export class RpDialogs extends AppElement {
     tab: { state: true },
     draft: { state: true },
     problem: { state: true },
+    saving: { state: true },
   };
 
   static styles = [
@@ -135,7 +136,10 @@ export class RpDialogs extends AppElement {
   declare tab: "general" | "advanced";
   declare draft: AdvancedValues;
   declare problem: string;
+  declare saving: boolean;
   private lastDialog: unknown = null;
+  /** The Settings dialog whose draft is showing; a pen change in between doesn't make it a new one. */
+  private lastSettings: unknown = null;
 
   constructor() {
     super();
@@ -144,6 +148,7 @@ export class RpDialogs extends AppElement {
     this.tab = "general";
     this.draft = {};
     this.problem = "";
+    this.saving = false;
   }
 
   connectedCallback(): void {
@@ -162,10 +167,13 @@ export class RpDialogs extends AppElement {
       this.chosen = this.s.machine.model;
       this.hint = "";
     }
-    if (dialog !== this.lastDialog && dialog?.kind === "settings") {
+    if (dialog?.kind !== "settings") this.lastSettings = null;
+    else if (dialog !== this.lastSettings) {
+      this.lastSettings = dialog;
       this.tab = "general";
       this.draft = { ...this.s.advanced };
       this.problem = "";
+      this.saving = false;
     }
   }
 
@@ -189,6 +197,8 @@ export class RpDialogs extends AppElement {
 
   private onKey = (event: KeyboardEvent): void => {
     if (!this.current()) return;
+    // A number box (the margin) commits on Enter and reverts on Esc itself; the dialog acts on the next press.
+    if (["Enter", "Escape"].includes(event.key) && event.composedPath().some((el) => el instanceof HTMLElement && el.tagName === "RP-FIELD")) return;
     if (event.key === "Escape") {
       event.stopPropagation();
       if (this.s.plot.state !== "load_pen") this.cancel(); // Esc never cancels a plot
@@ -327,7 +337,7 @@ export class RpDialogs extends AppElement {
         <button @click=${() => options && ((this.draft = { ...options.defaults }), (this.problem = ""))}>Restore defaults</button>
         <span class="grow"></span>
         <button @click=${() => this.app.closeDialog()}>Cancel</button>
-        <button class="primary" @click=${() => void this.saveAdvanced()}>Save</button>
+        <button class="primary" aria-disabled=${this.saving ? "true" : "false"} @click=${() => void this.saveAdvanced()}>Save</button>
       </div>`;
   }
 
@@ -385,13 +395,15 @@ export class RpDialogs extends AppElement {
 
   private async saveAdvanced(): Promise<void> {
     const options = this.s.start?.advanced_options;
-    if (!options) return;
+    if (!options || this.saving) return;
     const problem = checkAdvanced(this.draft, options);
     if (problem) {
       this.problem = problem;
       return;
     }
+    this.saving = true;
     const refused = await this.app.setAdvanced(changedAdvanced(this.draft, this.s.advanced));
+    this.saving = false;
     if (refused) this.problem = refused;
     else this.app.closeDialog();
   }
