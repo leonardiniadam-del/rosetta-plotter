@@ -110,7 +110,7 @@ def test_a_ready_page_passes(fake_gui, tmp_path):
     result = json.loads(out.read_text(encoding="utf-8"))
     assert result["ready"] is True and result["shell"] is True
     assert result["version"] == rosetta.__version__
-    assert result["error"] is None
+    assert result["error"] is None and result["missing"] == []
     assert windows[0].destroyed
 
 
@@ -131,3 +131,21 @@ def test_a_missing_page_fails(monkeypatch, tmp_path):
     out = tmp_path / "r.json"
     assert smoke.run(out) == 1
     assert "not found" in json.loads(out.read_text(encoding="utf-8"))["error"]
+
+
+def test_the_engine_modules_import_here():
+    assert smoke.missing_modules() == []
+
+
+def test_a_missing_module_is_reported():
+    missing = smoke.missing_modules(("json", "no_such_module_here"))
+    assert len(missing) == 1 and missing[0].startswith("no_such_module_here: ModuleNotFoundError")
+
+
+def test_a_bundle_missing_a_module_fails(fake_gui, monkeypatch, tmp_path):
+    fake_gui(lambda script: True)
+    monkeypatch.setattr(smoke, "missing_modules", lambda: ["pymupdf: ModuleNotFoundError"])
+    out = tmp_path / "r.json"
+    assert smoke.run(out) == 1
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["ready"] and result["shell"] and result["missing"] == ["pymupdf: ModuleNotFoundError"]

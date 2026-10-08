@@ -6,8 +6,9 @@ Never touches hardware, twice over: the Machine gets a stand-in plotter (NoPlott
 one, and every way plotink/pyserial could list, find or open a serial port is switched off for the
 whole process (no_serial_ports), so even a stray call can't reach a real AxiDraw.
 
-The result file holds {"ready": bool, "shell": bool, "version": str, "error": str|null, "seconds": float};
-the process exits 0 only when ready and shell are both true.
+The result file holds {"ready": bool, "shell": bool, "version": str, "missing": [str], "error": str|null,
+"seconds": float}; "missing" lists engine modules the app couldn't import (a bundle that left one out).
+The process exits 0 only when ready and shell are true and nothing is missing.
 """
 import json
 import os
@@ -93,13 +94,35 @@ def make_api(folder: Path):
     return Api(store, sink, machine=Machine(store, plotter_factory=NoPlotter)), sink
 
 
+# What the frozen app must be able to import beyond what the window itself needs: PDF/AI import, SVG
+# parsing and the EMS engine (axidraw_conf is loaded by name, so a bundle can easily miss it).
+ENGINE_MODULES = (
+    "pymupdf", "lxml.etree", "tinycss2", "serial.tools.list_ports",
+    "pyaxidraw.axidraw", "axidrawinternal.axidraw", "axidrawinternal.axidraw_conf", "plotink.ebb_serial",
+    "rosetta.pdf_import", "rosetta.engine.runner", "rosetta.engine.preview",
+)
+
+
+def missing_modules(names=ENGINE_MODULES) -> list[str]:
+    """The modules that can't be imported, as "name: error"."""
+    import importlib
+
+    missing = []
+    for name in names:
+        try:
+            importlib.import_module(name)
+        except Exception as error:
+            missing.append(f"{name}: {type(error).__name__}: {error}")
+    return missing
+
+
 def write_result(path: Path, result: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
 
 def passed(result: dict) -> bool:
-    return bool(result.get("ready")) and bool(result.get("shell"))
+    return bool(result.get("ready")) and bool(result.get("shell")) and not result.get("missing")
 
 
 def run(path: Path, timeout_s: float = TIMEOUT_S) -> int:
@@ -107,7 +130,8 @@ def run(path: Path, timeout_s: float = TIMEOUT_S) -> int:
 
     no_serial_ports()
     started = time.monotonic()
-    result = {"ready": False, "shell": False, "version": rosetta.__version__, "error": None, "seconds": 0.0}
+    result = {"ready": False, "shell": False, "version": rosetta.__version__, "missing": [], "error": None,
+              "seconds": 0.0}
     written = threading.Event()
     lock = threading.Lock()
 
@@ -148,8 +172,11 @@ def run(path: Path, timeout_s: float = TIMEOUT_S) -> int:
                 result["shell"] = window.evaluate_js(SHELL_RENDERED) is True
                 if not result["shell"]:
                     time.sleep(0.25)
-            if not passed(result):
+            result["missing"] = missing_modules()
+            if not (result["ready"] and result["shell"]):
                 finish(f"the page wasn't ready within {timeout_s:.0f} s")
+            elif result["missing"]:
+                finish("some modules couldn't be imported")
         except Exception as error:  # report it in the result file rather than lose it
             finish(f"{type(error).__name__}: {error}")
         finally:
