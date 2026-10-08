@@ -125,7 +125,9 @@ export class RpDialogs extends AppElement {
     if (dialog === this.lastDialog) return;
     this.lastDialog = dialog;
     if (!dialog) return;
+    // The pen change opens on Continue: a student who swaps the pen and presses Enter or Space must not cancel the plot.
     const first =
+      (dialog === "pen" ? this.renderRoot.querySelector<HTMLElement>(".dialog button.primary") : null) ??
       this.renderRoot.querySelector<HTMLElement>(".dialog input:checked") ??
       this.renderRoot.querySelector<HTMLElement>(".dialog input, .dialog select, .dialog textarea, .dialog button");
     first?.focus();

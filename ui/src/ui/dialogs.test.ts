@@ -93,6 +93,19 @@ describe("plot dialogs", () => {
     expect(app.state.plot.state).toBe("plotting");
   });
 
+  it("focuses Continue, so Enter continues rather than cancels the plot", async () => {
+    const { app } = await readyToPlot();
+    const dialogs = await mount<Lit>("rp-dialogs");
+    await app.startPlot();
+    await dialogs.updateComplete;
+    await dialogs.updateComplete;
+    const active = shadow(dialogs).activeElement as HTMLButtonElement | null;
+    expect(active?.textContent?.trim()).toBe("Continue");
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    await settle();
+    expect(app.state.plot.state).toBe("plotting");
+  });
+
   it("Esc doesn't cancel the plot from the pen-change dialog", async () => {
     const { app } = await readyToPlot();
     await mount<Lit>("rp-dialogs");

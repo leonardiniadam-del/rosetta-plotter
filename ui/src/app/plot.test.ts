@@ -365,3 +365,52 @@ describe("notices", () => {
     }
   });
 });
+
+describe("plot actions and their confirmations", () => {
+  it("a Stop question closes when the plot moves on", async () => {
+    const { app, fake } = await readyToPlot();
+    await app.startPlot();
+    await app.plotAction("continue");
+    expect(app.state.plot.state).toBe("plotting");
+    app.stopPlot();
+    expect(app.state.dialog?.kind).toBe("confirm");
+    fake.finishLayer(); // the pen finished while the question was open: now the pen change asks
+    await settle();
+    expect(app.state.plot.state).toBe("load_pen");
+    await app.plotAction("cancel");
+    await settle();
+    expect(app.state.plot.state).toBe("ready");
+    expect(app.state.dialog).toBeNull();
+  });
+
+  it("a Cancel plot question closes when the plot ends", async () => {
+    const { app } = await readyToPlot();
+    await app.startPlot();
+    app.cancelPlot();
+    expect(app.state.dialog?.kind).toBe("confirm");
+    await app.plotAction("cancel");
+    await settle();
+    expect(app.state.dialog).toBeNull();
+  });
+
+  it("the close-the-window question stays when the plot is at rest", async () => {
+    const { app } = await readyToPlot();
+    app.onEvent("close_requested", {});
+    expect(app.state.dialog?.kind).toBe("confirm");
+    await app.refreshPlot();
+    expect(app.state.dialog?.kind).toBe("confirm");
+  });
+
+  it("a second click on an action already on its way is ignored", async () => {
+    const { app, fake } = await readyToPlot();
+    await app.startPlot();
+    const first = app.plotAction("continue");
+    const second = app.plotAction("continue");
+    expect(await second).toBe(false);
+    await first;
+    await settle();
+    expect(fake.called("plot_continue")).toHaveLength(1);
+    expect(app.state.notice?.kind).not.toBe("error");
+  });
+});
+

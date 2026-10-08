@@ -39,7 +39,7 @@ export type Dialog =
   | { kind: "text"; title: string; text: string }
   | { kind: "shortcuts" }
   | { kind: "about" }
-  | { kind: "confirm"; title: string; message: string; confirm: string; cancel: string; run: () => void }
+  | { kind: "confirm"; title: string; message: string; confirm: string; cancel: string; plot?: true; run: () => void }
   | { kind: "settings" };
 
 export interface ViewOptions {

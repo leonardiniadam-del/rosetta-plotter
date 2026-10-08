@@ -83,6 +83,8 @@ export class App {
   private prepareTimer: ReturnType<typeof setTimeout> | null = null;
   /** Counts plot_state events: a reply sent before the newest one has an older picture of the plot. */
   private plotEvents = 0;
+  /** Plot actions sent and not answered yet: a double-click mustn't send one twice. */
+  private readonly pendingActions = new Set<PlotAction>();
   /** Counts the times the plot went out of date; a prepare reply from an older count is dropped. */
   private prepareGeneration = 0;
   /** A prepare was due while another was running. */
@@ -797,6 +799,9 @@ export class App {
     this.store.update((s) => ({ plot, summary: plot.state === "idle" ? null : s.summary }));
     if (AT_REST.includes(plot.state)) this.progress.update({ value: null });
     if (plot.state === "idle") this.schedulePrepare();
+    // A question about the running plot means nothing once it's over.
+    const asked = this.state.dialog;
+    if (AT_REST.includes(plot.state) && asked?.kind === "confirm" && asked.plot) this.closeDialog();
     this.showPlotNotice(plot, before);
     if (AT_REST.includes(plot.state) && !AT_REST.includes(before)) void this.refreshPlot();
   }
@@ -857,6 +862,8 @@ export class App {
 
   /** One of plot.actions. Pause never waits behind another plotter request; the rest take their turn. */
   async plotAction(action: PlotAction): Promise<boolean> {
+    if (this.pendingActions.has(action)) return false; // a double-click: the first is still on its way
+    this.pendingActions.add(action);
     const method = ACTION_METHODS[action];
     const seen = this.plotEvents;
     try {
@@ -873,6 +880,8 @@ export class App {
       const notice = this.recoveryNotice(this.state.plot.state, problem.message, problem.details);
       if (notice) this.notify(notice);
       return false;
+    } finally {
+      this.pendingActions.delete(action);
     }
   }
 
@@ -901,6 +910,7 @@ export class App {
         message: "The pen lifts and this plot can't be resumed.",
         confirm: "Stop",
         cancel: "Keep plotting",
+        plot: true,
         run: () => void this.pauseThenCancel(),
       },
     });
@@ -915,6 +925,7 @@ export class App {
         message: "This plot can't be resumed.",
         confirm: "Cancel plot",
         cancel: "Keep plot",
+        plot: true,
         run: () => {
           this.closeDialog();
           void this.plotAction("cancel");
