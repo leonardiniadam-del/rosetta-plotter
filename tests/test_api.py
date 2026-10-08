@@ -65,6 +65,11 @@ def test_app_start_describes_everything(tmp_path):
     assert reply["material"]["width"] == pytest.approx(279.4)
 
 
+def test_app_start_gives_the_advanced_defaults(tmp_path):
+    defaults = ok(make_api(tmp_path)[0].app_start())["advanced_options"]["defaults"]
+    assert defaults["accel"] == 75 and defaults["pen_up"] is None and defaults["hiding"] is False
+
+
 def test_problems_come_back_in_plain_language(tmp_path):
     reply = make_api(tmp_path)[0].job_import(str(tmp_path / "drawing.afdesign"))
     assert not reply["ok"] and "In Affinity, use File › Export" in reply["message"]

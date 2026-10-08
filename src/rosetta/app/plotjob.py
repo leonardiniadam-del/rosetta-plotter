@@ -29,9 +29,9 @@ NOTHING_TO_PLOT = "Nothing to plot: no lines land on the paper."
 TOO_MANY_COLORS = ("This drawing has more than 1000 colors. Reduce the colors in your design app, "
                    "then import it again.")
 FINISH_FIRST = "Finish or cancel the current plot first."
-PREPARE_FIRST = "Open the Plot step again to get the plot ready."
+PREPARE_FIRST = "Wait a moment: the plot is still being prepared."  # the page prepares it whenever it's idle
 STILL_PREPARING = "The plot is still being prepared. Wait a moment, then try again."
-CHANGED_WHILE_PREPARING = f"Something changed while the plot was being prepared. {PREPARE_FIRST}"
+CHANGED_WHILE_PREPARING = "Something changed while the plot was being prepared, so it's being prepared again."
 NOT_NOW = "That can't be done right now."
 CLIPPED = "Some lines hang off the paper or out of the plotter's reach. Those parts won't be drawn."
 DONE = "Done! The pen is back Home."

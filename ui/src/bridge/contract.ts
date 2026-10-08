@@ -102,6 +102,41 @@ export interface PlotStatus {
   details: string;
 }
 
+/** Advanced options by name (bridge.md set_advanced): null means automatic for pen_up and speed_pendown. */
+export type AdvancedValues = Record<string, number | boolean | null>;
+
+export interface PlotRun {
+  down: boolean;
+  /** Flattened [x, y, t, x, y, t, …]: machine mm from Home, t = seconds from the start of this pen's run. */
+  points: number[];
+}
+
+export interface PlotLayerSummary {
+  layer: number;
+  color: string;
+  name: string;
+  seconds: number;
+  pendown_mm: number;
+  path: PlotRun[];
+}
+
+export interface PlotSummary {
+  layers: PlotLayerSummary[];
+  total_seconds: number;
+  ink_bbox: number[];
+  warnings: string[];
+}
+
+/** The plot_progress event: about every 100 ms while drawing (bridge.md Events). */
+export interface PlotProgress {
+  layer: number;
+  x: number;
+  y: number;
+  pendown_mm: number;
+  fraction: number;
+  seconds_left: number;
+}
+
 export interface ModelInfo {
   number: number;
   name: string;
@@ -123,7 +158,7 @@ export interface PaperInfo {
 
 export interface AppStart {
   version: string;
-  settings: { units: Units; margin_mm: number; paper: PaperChoice; advanced: Record<string, unknown> };
+  settings: { units: Units; margin_mm: number; paper: PaperChoice; advanced: AdvancedValues };
   models: ModelInfo[];
   pen_types: PenTypeInfo[];
   papers: PaperInfo[];
@@ -131,6 +166,7 @@ export interface AppStart {
     labels: Record<string, string>;
     ranges: Record<string, [number, number]>;
     choices: Record<string, number[]>;
+    defaults: AdvancedValues;
   };
   pen_down_max: number;
   machine: MachineStatus;
@@ -139,10 +175,12 @@ export interface AppStart {
 }
 
 type MachineReply = Reply<{ machine: MachineStatus }>;
+type PlotReply = Reply<{ plot: PlotStatus; machine: MachineStatus }>;
 
 export interface Api {
   app_start(): Reply<AppStart>;
   set_units(units: Units): Reply<object>;
+  set_advanced(values: AdvancedValues): Reply<{ advanced: AdvancedValues }>;
   diagnostics(): Reply<{ text: string }>;
   quit_confirmed(): Reply<object>;
   plotter_scan(): MachineReply;
@@ -183,6 +221,18 @@ export interface Api {
   piece_delete(piece_id: string): Reply<object>;
   paper_rotate(): Reply<{ material: Material; paper: PaperChoice; pieces: PieceInfo[] }>;
   set_pen_visible(color: string, visible: boolean): Reply<{ hidden: string[] }>;
+  set_skip_white(skip: boolean): Reply<{ skip_white: boolean }>;
   job_colors(): Reply<ColorsSummary>;
-  plot_status(): Reply<{ plot: PlotStatus; machine: MachineStatus }>;
+  plot_prepare(): Reply<{ summary: PlotSummary }>;
+  plot_trace(): MachineReply;
+  plot_start(): PlotReply;
+  plot_continue(): PlotReply;
+  plot_pause(): PlotReply;
+  plot_resume(): PlotReply;
+  plot_home(): PlotReply;
+  plot_cancel(): PlotReply;
+  plot_reconnect(): PlotReply;
+  plot_rehomed(): PlotReply;
+  plot_retry(): PlotReply;
+  plot_status(): PlotReply;
 }

@@ -6,7 +6,7 @@ import pytest
 from rosetta.app.events import RecordingSink
 from rosetta.app.machine import BUSY, NO_POWER, MachineState
 from rosetta.app.plotjob import (
-    CLIPPED, DONE, FINISH_FIRST, HOME_UNKNOWN, NOT_NOW, NOTHING_TO_PLOT, PREPARE_FIRST, STILL_PREPARING,
+    CHANGED_WHILE_PREPARING, CLIPPED, DONE, FINISH_FIRST, HOME_UNKNOWN, NOT_NOW, NOTHING_TO_PLOT, PREPARE_FIRST, STILL_PREPARING,
     UNEXPECTED, PlotController,
 )
 from rosetta.app.session import Session
@@ -215,8 +215,15 @@ def test_a_change_while_preparing_is_not_lost(tmp_path):
     planner.let_go.set()
     preparing.join()
     assert isinstance(replies[0], UserProblem) and rig.state() == "idle"
+    assert str(replies[0]) == CHANGED_WHILE_PREPARING
     rig.controller.prepare()  # what the page does when the plot goes back to idle
     assert rig.state() == "ready"
+
+
+def test_prepare_messages_suit_the_window():
+    # The wizard's Plot step is gone: the page prepares the plot by itself whenever it goes back to idle.
+    assert "Plot step" not in PREPARE_FIRST and "Plot step" not in CHANGED_WHILE_PREPARING
+    assert "still being prepared" not in CHANGED_WHILE_PREPARING
 
 
 def test_trace_goes_around_the_drawing_and_home(tmp_path):

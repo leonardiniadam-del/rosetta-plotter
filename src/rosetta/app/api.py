@@ -20,7 +20,7 @@ from rosetta.app.session import Session, pages_in
 from rosetta.app.settings import MAX_MARGIN_MM, UNITS, PaperChoice, PenProfile, SettingsStore
 from rosetta.compose import Material
 from rosetta.engine.options import (
-    ADVANCED_CHOICES, ADVANCED_LABELS, ADVANCED_RANGES, MIN_PEN_TRAVEL, PEN_DOWN_MAX, advanced_from_dict,
+    ADVANCED_CHOICES, ADVANCED_LABELS, ADVANCED_RANGES, MIN_PEN_TRAVEL, PEN_DOWN_MAX, Advanced, advanced_from_dict,
 )
 from rosetta.errors import ImportProblem, UserProblem
 from rosetta.models import MODELS, PEN_TYPES, get_model
@@ -124,6 +124,7 @@ class Api:
                 "labels": ADVANCED_LABELS,
                 "ranges": {name: list(bounds) for name, bounds in ADVANCED_RANGES.items()},
                 "choices": {name: list(values) for name, values in ADVANCED_CHOICES.items()},
+                "defaults": dataclasses.asdict(Advanced()),
             },
             "pen_down_max": PEN_DOWN_MAX,
             "machine": self._machine.status(),

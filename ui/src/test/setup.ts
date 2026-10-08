@@ -10,6 +10,7 @@ const running: App[] = [];
 
 export async function startApp(fake = new FakeApi()): Promise<{ app: App; fake: FakeApi }> {
   const app = new App(new Store(initialState()), new Client(fake), { colorsDelayMs: 0, scanIntervalMs: 60_000 });
+  fake.emit = (name, data) => app.onEvent(name, data);
   running.push(app);
   setApp(app);
   await app.start();

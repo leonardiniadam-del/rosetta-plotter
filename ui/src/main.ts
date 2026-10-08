@@ -21,7 +21,12 @@ async function pickApi(): Promise<Api> {
 }
 
 async function boot(): Promise<void> {
-  const app = new App(new Store(initialState()), new Client(await pickApi()));
+  const api = await pickApi();
+  const app = new App(new Store(initialState()), new Client(api));
+  if (api instanceof FakeApi) {
+    api.emit = (name, data) => app.onEvent(name, data); // the demo backend's events, as Python's would arrive
+    api.autoplay();
+  }
   setApp(app);
   listenForEvents((name, data) => app.onEvent(name, data));
   installShortcuts(app);
