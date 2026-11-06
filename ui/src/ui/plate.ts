@@ -7,7 +7,8 @@ import { repeat } from "lit/directives/repeat.js";
 import type { ViewRequest } from "../app/app";
 import type { PieceInfo, PlacementData } from "../bridge/contract";
 import { angleAt, GRID, gridLines, handleAt, hitPiece, JOB_MIME, linesToPath, marqueeHits, rectFrom, snapAngle, type IdBox } from "../canvas/interaction";
-import { fitCamera, panBy, toMachine, toScreen, zoomAt, type Camera, type Size } from "../geometry/camera";
+import { cameraMatrix, fitCamera, panBy, toMachine, toScreen, zoomAt, type Camera, type Size } from "../geometry/camera";
+import { orientMatrix, type OrientationCode } from "../geometry/orientation";
 import { pointAt, routeOf, routePath, timeAtPendown } from "../geometry/route";
 import { pieceMatrix, rotateAboutCenter, scaleFromHandle, type Box, type Handle, type Point } from "../geometry/placement";
 import { disabledReason } from "../state/reasons";
@@ -175,7 +176,9 @@ export class RpPlate extends AppElement {
     `,
   ];
 
-  private camera: Camera = { scale: 1, x: 0, y: 0 };
+  private camera: Camera = { scale: 1, x: 0, y: 0, orient: orientMatrix("nw-h") };
+  /** The orientation the camera is turned for. */
+  private turnedFor: OrientationCode = "nw-h";
   private size: Size = { width: 800, height: 600 };
   private drag: Drag | null = null;
   private spaceHeld = false;
@@ -223,6 +226,12 @@ export class RpPlate extends AppElement {
   }
 
   protected willUpdate(): void {
+    // The plotter's orientation changed (picked, or a plotter with its own came along): turn the view and fit again.
+    if (this.s.orientation !== this.turnedFor) {
+      this.turnedFor = this.s.orientation;
+      this.camera = { ...this.camera, orient: orientMatrix(this.turnedFor) };
+      if (this.fitted) this.fit("paper");
+    }
     // Drop the cached paths of drawings that are gone.
     const jobs = new Set(this.s.jobs.map((j) => j.id));
     for (const key of this.paths.keys()) if (!jobs.has(key.split("|")[0])) this.paths.delete(key);
@@ -247,7 +256,7 @@ export class RpPlate extends AppElement {
       what === "reach" && reach
         ? { x: 0, y: 0, width: reach[0], height: reach[1] }
         : { x: material.x, y: material.y, width: material.width, height: material.height };
-    this.camera = fitCamera(box, this.size);
+    this.camera = fitCamera(box, this.size, undefined, orientMatrix(this.s.orientation));
     this.fitted = true;
     this.requestUpdate();
   }
@@ -510,7 +519,7 @@ export class RpPlate extends AppElement {
           <rect x=${m.x} y=${m.y} width=${Math.max(0, clipRight - m.x)} height=${Math.max(0, clipBottom - m.y)} fill="black" />
         </mask>
       </defs>
-      <g transform=${`matrix(${cam.scale} 0 0 ${cam.scale} ${cam.x} ${cam.y})`}>
+      <g transform=${cameraMatrix(cam)}>
         ${s.view.grid ? this.grid() : nothing}
         ${reach ? svg`<rect class="reach" x="0" y="0" width=${reach[0]} height=${reach[1]} />` : nothing}
         <rect class="paper" x=${m.x} y=${m.y} width=${m.width} height=${m.height} />
@@ -529,8 +538,13 @@ export class RpPlate extends AppElement {
 
   private grid() {
     const { minor, every } = GRID[this.s.units];
-    const [x0, y0] = toMachine(this.camera, [0, 0]);
-    const [x1, y1] = toMachine(this.camera, [this.size.width, this.size.height]);
+    // All four window corners: in a turned view the top-left corner isn't the smallest machine x and y.
+    const { width, height } = this.size;
+    const corners = ([[0, 0], [width, 0], [width, height], [0, height]] as Point[]).map((p) => toMachine(this.camera, p));
+    const x0 = Math.min(...corners.map((c) => c[0]));
+    const x1 = Math.max(...corners.map((c) => c[0]));
+    const y0 = Math.min(...corners.map((c) => c[1]));
+    const y1 = Math.max(...corners.map((c) => c[1]));
     const lines = (step: number, kind: string) => {
       if (step * this.camera.scale < MIN_GRID_PX) return nothing;
       return svg`${gridLines(x0, x1, step).map((x) => svg`<line class=${kind} x1=${x} y1=${y0} x2=${x} y2=${y1} />`)}${gridLines(y0, y1, step).map(
@@ -600,8 +614,8 @@ export class RpPlate extends AppElement {
       .filter((p) => s.selection.includes(p.id))
       .map((piece) => {
         const box = pieceBoxOnPaper(s, piece);
-        const [sx, sy] = toScreen(this.camera, [x + box.x, y + box.y]);
-        return svg`<rect class="selection" x=${sx} y=${sy} width=${box.width * this.camera.scale} height=${box.height * this.camera.scale} />`;
+        const on = rectFrom(toScreen(this.camera, [x + box.x, y + box.y]), toScreen(this.camera, [x + box.x + box.width, y + box.y + box.height]));
+        return svg`<rect class="selection" x=${on.x} y=${on.y} width=${on.width} height=${on.height} />`;
       });
     const handles = plotRunning(s) || s.tool === "rotate" ? null : this.handles();
     return svg`${outlines}${handles
