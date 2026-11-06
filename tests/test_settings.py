@@ -117,3 +117,11 @@ def test_a_failed_save_is_logged_not_raised(tmp_path, monkeypatch, caplog):
 def test_app_folder_is_under_appdata(monkeypatch, tmp_path):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     assert app_folder() == tmp_path / "RosettaPlotter"
+
+
+def test_orientations_load_and_bad_ones_fall_back(tmp_path):
+    settings = _store_with(tmp_path, {"orientation": "se-v", "orientations": {"Wall": "ne-h", "Bad": "up"}}).settings
+    assert settings.orientation == "se-v"
+    assert settings.orientations == {"Wall": "ne-h"}
+    assert _store_with(tmp_path, {"orientation": "sideways"}).settings.orientation == "nw-h"
+    assert _store_with(tmp_path, {"orientations": ["ne-h"]}).settings.orientations == {}

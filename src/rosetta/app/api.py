@@ -17,7 +17,9 @@ from rosetta.app.machine import NOT_HOMED, Machine, MachineState
 from rosetta.app.paper import CUSTOM, PAPER_SIZES, paper_dimensions
 from rosetta.app.plotjob import FINISH_FIRST, PlotController
 from rosetta.app.session import Session, pages_in
-from rosetta.app.settings import MAX_MARGIN_MM, UNITS, PaperChoice, PenProfile, SettingsStore
+from rosetta.app.settings import (
+    DEFAULT_VIEW_ORIENTATION, MAX_MARGIN_MM, UNITS, VIEW_ORIENTATIONS, PaperChoice, PenProfile, SettingsStore,
+)
 from rosetta.compose import Material
 from rosetta.engine.options import (
     ADVANCED_CHOICES, ADVANCED_LABELS, ADVANCED_RANGES, MIN_PEN_TRAVEL, PEN_DOWN_MAX, Advanced, advanced_from_dict,
@@ -130,6 +132,7 @@ class Api:
             "machine": self._machine.status(),
             "material": self._material(),
             "plot": self._plot.status(),
+            "orientation": self._orientation(),
         }
 
     @_bridge
@@ -188,7 +191,7 @@ class Api:
         """Look for the plotter (the page calls this every 2 s while none is connected)."""
         self._machine.scan()
         self._load_profile()
-        return {"machine": self._machine.status()}
+        return {"machine": self._machine.status(), "orientation": self._orientation()}
 
     @_bridge
     def plotter_identify(self, model, penlift, label=""):
@@ -196,7 +199,7 @@ class Api:
             raise ValueError(f"Bad plotter identity: {model!r}, {penlift!r}, {label!r}")
         self._machine.identify(model, penlift, label)
         self._load_profile()
-        return {"machine": self._machine.status()}
+        return {"machine": self._machine.status(), "orientation": self._orientation()}
 
     @_bridge
     def plotter_motors_off(self):
@@ -236,6 +239,26 @@ class Api:
                 settings.profiles[key] = PenProfile(pen_down, pen_type)
         self._plot.invalidate()
         return {"machine": status}
+
+    @_bridge
+    def set_orientation(self, code):
+        """Turn the plate to match how this plotter sits. Only the view changes: the plot stays as it is."""
+        if code not in VIEW_ORIENTATIONS:
+            raise ValueError(f"Unknown orientation: {code!r}")
+        key = self._machine.profile_key()
+        with self._store.change() as settings:
+            settings.orientation = code
+            if key:
+                settings.orientations[key] = code
+        return {"orientation": code}
+
+    def _orientation(self) -> str:
+        """This plotter's saved view; a plotter seen for the first time gets the standard one."""
+        settings = self._store.settings
+        key = self._machine.profile_key()
+        if key:
+            return settings.orientations.get(key, DEFAULT_VIEW_ORIENTATION)
+        return settings.orientation
 
     # Step 2: the paper.
 

@@ -25,6 +25,10 @@ APP_FOLDER = "RosettaPlotter"
 SETTINGS_VERSION = 1
 UNITS = ("in", "mm", "cm")
 MAX_MARGIN_MM = 50.0
+# How the plate is turned to match the plotter as the student faces it (orientation spec §1):
+# the screen corner HOME is in, then whether machine X runs across (h) or up/down (v).
+VIEW_ORIENTATIONS = ("nw-h", "nw-v", "ne-h", "ne-v", "se-h", "se-v", "sw-h", "sw-v")
+DEFAULT_VIEW_ORIENTATION = "nw-h"
 
 
 def app_folder() -> Path:
@@ -65,6 +69,8 @@ class Settings:
     advanced: Advanced = field(default_factory=Advanced)
     profiles: dict[str, PenProfile] = field(default_factory=dict)  # keyed by Machine.profile_key()
     old_firmware: dict[str, StoredIdentity] = field(default_factory=dict)  # keyed by serial port
+    orientation: str = DEFAULT_VIEW_ORIENTATION  # the last one used on this laptop
+    orientations: dict[str, str] = field(default_factory=dict)  # keyed by Machine.profile_key()
 
 
 class SettingsStore:
@@ -133,6 +139,8 @@ def _from_json(data: dict) -> Settings:
         advanced=_advanced(data.get("advanced")),
         profiles=_profiles(data.get("profiles")),
         old_firmware=_identities(data.get("old_firmware")),
+        orientation=_choice(data.get("orientation"), VIEW_ORIENTATIONS, defaults.orientation),
+        orientations=_orientations(data.get("orientations")),
     )
 
 
@@ -194,6 +202,12 @@ def _profiles(data) -> dict[str, PenProfile]:
         for key, value in data.items()
         if isinstance(key, str) and isinstance(value, dict)
     }
+
+
+def _orientations(data) -> dict[str, str]:
+    if not isinstance(data, dict):
+        return {}
+    return {key: value for key, value in data.items() if isinstance(key, str) and value in VIEW_ORIENTATIONS}
 
 
 def _identities(data) -> dict[str, StoredIdentity]:

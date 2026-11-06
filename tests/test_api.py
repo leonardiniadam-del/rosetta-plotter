@@ -299,3 +299,39 @@ def test_centimetres_are_a_unit(tmp_path):
     api, _sink = make_api(tmp_path)
     ok(api.set_units("cm"))
     assert SettingsStore(tmp_path / "settings.json").settings.units == "cm"
+
+
+def test_orientation_is_remembered_per_plotter(tmp_path):
+    ebb = _plotter()
+    api, _sink = make_api(tmp_path, ebb)
+    assert ok(api.app_start())["orientation"] == "nw-h"
+    assert ok(api.plotter_scan())["orientation"] == "nw-h"
+    assert ok(api.set_orientation("sw-v"))["orientation"] == "sw-v"
+    again, _sink = make_api(tmp_path, ebb)
+    assert ok(again.plotter_scan())["orientation"] == "sw-v"
+
+
+def test_orientation_without_a_plotter_is_the_last_used(tmp_path):
+    api, _sink = make_api(tmp_path)
+    ok(api.set_orientation("ne-v"))
+    again, _sink = make_api(tmp_path)
+    assert ok(again.app_start())["orientation"] == "ne-v"
+    assert ok(again.plotter_scan())["orientation"] == "ne-v"
+
+
+def test_a_new_plotter_starts_in_the_default_orientation(tmp_path):
+    api, _sink = make_api(tmp_path)
+    ok(api.set_orientation("ne-v"))  # no plotter: only the last-used view changes
+    again, _sink = make_api(tmp_path, _plotter())
+    assert ok(again.plotter_scan())["orientation"] == "nw-h"
+
+
+def test_orientation_rejects_unknown_codes_and_never_touches_the_plot(tmp_path):
+    api, _sink = make_api(tmp_path, _plotter())
+    ok(api.plotter_scan())
+    ok(api.plotter_set_home())
+    _place(api, tmp_path)
+    before = ok(api.plot_prepare())
+    assert not api.set_orientation("up")["ok"]
+    ok(api.set_orientation("se-h"))
+    assert ok(api.plot_prepare()) == before
