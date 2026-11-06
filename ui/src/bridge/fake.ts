@@ -5,6 +5,7 @@
  * `progress`, `finishLayer` and `disconnect` (or `autoplay` under `npm run dev`) stand in for the plot running.
  */
 import { applyMatrix, MAX_SCALE, pieceBox, pieceMatrix } from "../geometry/placement";
+import { isOrientation, type OrientationCode } from "../geometry/orientation";
 import { normalizeAngle, type Units } from "../geometry/units";
 import type {
   AdvancedValues,
@@ -177,6 +178,8 @@ export class FakeApi implements Api {
   private penDown = 30;
   private penType = "fineliner";
   private units: Units = "in";
+  /** The saved plate orientation (one for every plotter: the fake has only one). */
+  orientation: OrientationCode = "nw-h";
   private paper: PaperChoice = { size: "letter", orientation: "landscape", custom_width_mm: null, custom_height_mm: null };
   private material = { x: 0, y: 0, width: 279.4, height: 215.9 };
   private margin = 6.35;
@@ -311,7 +314,15 @@ export class FakeApi implements Api {
       machine: this.status(),
       material: this.materialInfo(),
       plot: this.plotInfo(),
+      orientation: this.orientation,
     });
+  }
+
+  async set_orientation(code: OrientationCode) {
+    this.log("set_orientation", [code]);
+    if (!isOrientation(code)) return fail(`Unknown orientation: ${String(code)}`);
+    this.orientation = code;
+    return ok({ orientation: code });
   }
 
   async set_units(units: Units) {
@@ -358,10 +369,10 @@ export class FakeApi implements Api {
 
   async plotter_scan() {
     this.log("plotter_scan", []);
-    if (this.machinePlotting()) return ok({ machine: this.status() }); // the plot has the plotter
+    if (this.machinePlotting()) return ok({ machine: this.status(), orientation: this.orientation }); // the plot has the plotter
     this.connected = this.plugged;
     if (!this.plugged) this.homed = false;
-    return ok({ machine: this.status() });
+    return ok({ machine: this.status(), orientation: this.orientation });
   }
 
   async plotter_identify(model: number, penlift: number, label: string) {
@@ -371,7 +382,7 @@ export class FakeApi implements Api {
     this.model = model;
     this.labelStored = label.slice(0, 16); // a stand-in for the plotter's shorter limit
     this.invalidate();
-    return ok({ machine: this.status() });
+    return ok({ machine: this.status(), orientation: this.orientation });
   }
 
   async plotter_motors_off() {

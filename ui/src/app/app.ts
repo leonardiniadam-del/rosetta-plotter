@@ -2,6 +2,7 @@
  * Everything the window can do. Each action checks why it might not work yet (spec §6) and explains it in
  * the strip, calls Python (plotter requests one at a time), and updates the store.
  */
+import type { OrientationCode } from "../geometry/orientation";
 import { BridgeError, type Client } from "../bridge/client";
 import type { AdvancedValues, MachineStatus, PlacementData, PlotProgress, PlotStatus } from "../bridge/contract";
 import { MAX_SCALE, pieceBox, resizeBox, rotateAboutCenter, type Point } from "../geometry/placement";
@@ -129,6 +130,7 @@ export class App {
       margin: start.settings.margin_mm,
       plot: start.plot,
       advanced: start.settings.advanced,
+      orientation: start.orientation,
       jobs,
       pieces,
     });
@@ -233,14 +235,35 @@ export class App {
   /** Look for the plotter. No plotter is normal, so this never shows a problem. */
   async scan(): Promise<void> {
     try {
-      this.setMachine((await this.client.call("plotter_scan")).machine);
+      const reply = await this.client.call("plotter_scan");
+      this.setMachine(reply.machine);
+      this.takeOrientation(reply.orientation);
     } catch {
       // The next scan tries again.
     }
   }
 
+  /** A plotter's saved orientation came back with it. */
+  private takeOrientation(code: OrientationCode | undefined): void {
+    if (code && code !== this.state.orientation) this.store.update({ orientation: code });
+  }
+
+  /** Turn the plate to match how the plotter sits. Only the view changes, never the plot. */
+  async setPlotterOrientation(code: OrientationCode): Promise<void> {
+    if (this.blocked("orientation")) return;
+    const before = this.state.orientation;
+    this.store.update({ orientation: code });
+    const reply = await this.attempt(() => this.client.call("set_orientation", code));
+    if (!reply) this.store.update({ orientation: before });
+  }
+
   async identify(model: number, penlift: number, label: string): Promise<void> {
-    if (!(await this.plotterAction(() => this.client.hardware("plotter_identify", model, penlift, label)))) return;
+    const identified = await this.plotterAction(async () => {
+      const reply = await this.client.hardware("plotter_identify", model, penlift, label);
+      this.takeOrientation(reply.orientation);
+      return reply;
+    });
+    if (!identified) return;
     this.store.update({ dialog: null });
     this.refreshColors();
     // The plotter keeps the label in its nickname, which may be shorter than what was typed.

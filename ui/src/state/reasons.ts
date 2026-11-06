@@ -14,6 +14,7 @@ export type Control =
   | "arrange"
   | "markCorner"
   | "rotatePaper"
+  | "orientation"
   | "model";
 
 const NO_PLOTTER = "No plotter connected. Plug in the USB cable and the power adapter.";
@@ -80,6 +81,7 @@ export function disabledReason(control: Control, s: AppState): string | null {
       [machine !== "ready", NO_HOME],
     ],
     rotatePaper: [[plotRunning(s), RUNNING]],
+    orientation: [[plotRunning(s), RUNNING]],
     model: [
       [machine === "no_plotter", NO_PLOTTER],
       [plotRunning(s), RUNNING],

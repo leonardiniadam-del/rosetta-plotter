@@ -1,4 +1,5 @@
 /** The bridge to Python (docs/bridge.md): the methods and replies this page uses. Lengths are mm. */
+import type { OrientationCode } from "../geometry/orientation";
 import type { Units } from "../geometry/units";
 
 export type Failure = { ok: false; message: string; details: string };
@@ -172,6 +173,8 @@ export interface AppStart {
   machine: MachineStatus;
   material: Material;
   plot: PlotStatus;
+  /** How the plate is turned to match the plotter (orientation spec §1). */
+  orientation: OrientationCode;
 }
 
 type MachineReply = Reply<{ machine: MachineStatus }>;
@@ -183,8 +186,9 @@ export interface Api {
   set_advanced(values: AdvancedValues): Reply<{ advanced: AdvancedValues }>;
   diagnostics(): Reply<{ text: string }>;
   quit_confirmed(): Reply<object>;
-  plotter_scan(): MachineReply;
-  plotter_identify(model: number, penlift: number, label: string): MachineReply;
+  plotter_scan(): Reply<{ machine: MachineStatus; orientation: OrientationCode }>;
+  plotter_identify(model: number, penlift: number, label: string): Reply<{ machine: MachineStatus; orientation: OrientationCode }>;
+  set_orientation(code: OrientationCode): Reply<{ orientation: OrientationCode }>;
   plotter_motors_off(): MachineReply;
   plotter_set_home(): MachineReply;
   plotter_jog(dx: number, dy: number): MachineReply;

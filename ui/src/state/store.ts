@@ -1,4 +1,5 @@
 /** The app's one state, and how Lit components follow it. */
+import type { OrientationCode } from "../geometry/orientation";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import type {
   AdvancedValues,
@@ -64,6 +65,8 @@ export interface AppState {
   /** Set Home's first click switched the motors off; the next click confirms. */
   homing: boolean;
   jogStep: 1 | 10;
+  /** How the plate is turned to match the plotter (orientation spec §1). */
+  orientation: OrientationCode;
   /** The W/H and W%/H% link in the control bar. */
   linkScale: boolean;
   view: ViewOptions;
@@ -114,6 +117,7 @@ export function initialState(): AppState {
     tool: "select",
     homing: false,
     jogStep: 1,
+    orientation: "nw-h",
     linkScale: true,
     view: { grid: true, margins: true, original: false },
     notice: null,
