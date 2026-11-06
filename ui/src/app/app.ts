@@ -72,6 +72,10 @@ function fileName(path: string): string {
 const PICK_HOME = "Click the corner where HOME is on your plotter, as you face it.";
 const PICK_X = "Click the corner the pen moves toward along X (along the rail).";
 
+/** Holding a jog arrow (orientation spec §3): how long before it keeps going, and each move while held. */
+export const HOLD_DELAY_MS = 300;
+export const HOLD_MOVE_MM = 3;
+
 export class App {
   /** The pointer's machine position; kept apart so moving the mouse only re-renders the status bar. */
   readonly cursor = new Store<{ point: Point | null }>({ point: null });
@@ -340,6 +344,39 @@ export class App {
     const step = this.state.jogStep;
     const [x, y] = this.machineDirection(dx, dy);
     await this.plotterAction(() => this.client.hardware("plotter_jog", x * step, y * step));
+  }
+
+  /** The hold under way, if any: a new press or a release replaces it, which ends its loop. */
+  private holding: object | null = null;
+
+  /**
+   * Press on a jog arrow: one step now, then, while still held after HOLD_DELAY_MS, moves of
+   * HOLD_MOVE_MM one at a time. It stops on release, on a problem, or when the pen stops moving
+   * (the reach). Directions are on screen, as for jog().
+   */
+  jogHold(dx: number, dy: number): void {
+    this.jogRelease();
+    if (this.blocked("move")) return;
+    const hold = {};
+    this.holding = hold;
+    void (async () => {
+      await this.jog(dx, dy);
+      await new Promise((done) => setTimeout(done, HOLD_DELAY_MS));
+      let last = this.state.machine.position;
+      while (this.holding === hold && disabledReason("move", this.state) === null) {
+        const [x, y] = this.machineDirection(dx, dy);
+        const moved = await this.plotterAction(() => this.client.hardware("plotter_jog", x * HOLD_MOVE_MM, y * HOLD_MOVE_MM));
+        const now = this.state.machine.position;
+        if (!moved || !now || (last && now[0] === last[0] && now[1] === last[1])) break;
+        last = now;
+      }
+      if (this.holding === hold) this.holding = null;
+    })();
+  }
+
+  /** Let go of a jog arrow: no new move is sent; one already on its way finishes. */
+  jogRelease(): void {
+    this.holding = null;
   }
 
   async movePenTo([x, y]: Point): Promise<void> {

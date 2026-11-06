@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import "./dock";
 import { mount, settle, shadow, startApp } from "../test/setup";
 
@@ -115,5 +115,39 @@ describe("dock", () => {
     await settle();
     expect(root.querySelector("rp-jobs")).toBeNull();
     expect(root.querySelector("rp-pens")).not.toBeNull();
+  });
+});
+
+describe("jog pad: press and hold", () => {
+  function press(el: HTMLElement, type: string) {
+    el.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, pointerId: 1 }));
+  }
+
+  it("a press and release moves one step; a keyboard click moves one step", async () => {
+    const { app, fake } = await startApp();
+    await app.setHome();
+    await app.setHome();
+    const root = shadow(await mount("rp-plotter"));
+    await settle();
+    const right = labelled(root, "Move pen right");
+    press(right, "pointerdown");
+    press(right, "pointerup");
+    await settle();
+    right.click(); // Enter or Space on the focused button
+    await settle();
+    expect(fake.called("plotter_jog")).toEqual([[1, 0], [1, 0]]);
+  });
+
+  it("lets go when the window loses focus", async () => {
+    const { app } = await startApp();
+    await app.setHome();
+    await app.setHome();
+    const root = shadow(await mount("rp-plotter"));
+    await settle();
+    press(labelled(root, "Move pen right"), "pointerdown");
+    const release = vi.spyOn(app, "jogRelease"); // after the press, which lets go of any earlier hold itself
+    window.dispatchEvent(new Event("blur"));
+    expect(release).toHaveBeenCalled();
+    app.jogRelease();
   });
 });

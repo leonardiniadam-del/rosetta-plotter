@@ -64,6 +64,53 @@ export class RpPlotterPanel extends AppElement {
     </button>`;
   }
 
+  private releaseHold = (): void => this.app.jogRelease();
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener("blur", this.releaseHold);
+  }
+
+  disconnectedCallback(): void {
+    window.removeEventListener("blur", this.releaseHold);
+    this.app.jogRelease();
+    super.disconnectedCallback();
+  }
+
+  /** A jog arrow: press and hold to keep moving (spec §3); Enter or Space moves one step. */
+  private arrow(label: string, iconName: IconName, reason: string | null, dx: number, dy: number) {
+    const down = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      if (reason) {
+        this.app.explain(reason);
+        return;
+      }
+      try {
+        (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
+      } catch {
+        // Not every pointer can be captured; pointerup still ends the hold.
+      }
+      this.app.jogHold(dx, dy);
+    };
+    return html`<button
+      aria-label=${label}
+      title=${reason ? `${label}: ${reason}` : `${label}. Hold to keep moving`}
+      aria-disabled=${reason ? "true" : "false"}
+      @pointerdown=${down}
+      @pointerup=${this.releaseHold}
+      @pointercancel=${this.releaseHold}
+      @lostpointercapture=${this.releaseHold}
+      @click=${(event: MouseEvent) => {
+        // A pointer press already moved; detail 0 is Enter or Space on the focused button.
+        if (event.detail !== 0) return;
+        if (reason) this.app.explain(reason);
+        else void this.app.jog(dx, dy);
+      }}
+    >
+      ${icon(iconName)}
+    </button>`;
+  }
+
   render() {
     const s = this.s;
     const m = s.machine;
@@ -107,13 +154,13 @@ export class RpPlotterPanel extends AppElement {
         >Test mark</button>
       </div>
       <div class="pad" role="group" aria-label="Move the pen (pen up)">
-        <span></span>${this.button("Move pen up (on screen)", "arrowUp", move, () => void this.app.jog(0, -1))}<span></span>
-        ${this.button("Move pen left (on screen)", "arrowLeft", move, () => void this.app.jog(-1, 0))}
+        <span></span>${this.arrow("Move pen up (on screen)", "arrowUp", move, 0, -1)}<span></span>
+        ${this.arrow("Move pen left (on screen)", "arrowLeft", move, -1, 0)}
         <button class="step" aria-label=${`Step ${s.jogStep} mm (click to change)`} @click=${() => this.app.setJogStep(s.jogStep === 1 ? 10 : 1)}>
           ${s.jogStep} mm
         </button>
-        ${this.button("Move pen right (on screen)", "arrowRight", move, () => void this.app.jog(1, 0))}
-        <span></span>${this.button("Move pen down (on screen)", "arrowDown", move, () => void this.app.jog(0, 1))}<span></span>
+        ${this.arrow("Move pen right (on screen)", "arrowRight", move, 1, 0)}
+        <span></span>${this.arrow("Move pen down (on screen)", "arrowDown", move, 0, 1)}<span></span>
       </div>`;
   }
 }
