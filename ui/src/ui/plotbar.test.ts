@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import "./plotbar";
 import "./controlbar";
 import "./statusbar";
-import { mount, readyToPlot, settle, shadow } from "../test/setup";
+import { mount, readyToPlot, settle, shadow, startApp } from "../test/setup";
 import type { RpField } from "./field";
 
 type Lit = HTMLElement & { updateComplete: Promise<unknown> };
@@ -159,5 +159,39 @@ describe("status bar while plotting", () => {
     await settle();
     await bar.updateComplete;
     expect(shadow(bar).textContent).toContain("Keep the laptop open while plotting.");
+  });
+});
+
+describe("Set Home on the plot bar", () => {
+  it("sits just left of Start", async () => {
+    await readyToPlot();
+    const labels = Array.from(shadow(await mount<Lit>("rp-plotbar")).querySelectorAll("button")).map((b) => b.textContent?.trim());
+    expect(labels).toEqual(["Set Home", "Start", "Pause", "Stop"]);
+  });
+
+  it("runs the two-click Set Home", async () => {
+    const { app, fake } = await startApp();
+    const bar = await mount<Lit>("rp-plotbar");
+    const root = shadow(bar);
+    button(root, "Set Home").click();
+    await settle();
+    const confirm = button(root, "Confirm Home");
+    expect(confirm.classList.contains("active")).toBe(true);
+    expect(confirm.title).toBe("Slide the pen to the HOME corner, then click again (Esc cancels)");
+    expect(fake.called("plotter_motors_off")).toHaveLength(1);
+    confirm.click();
+    await settle();
+    expect(button(root, "Set Home").classList.contains("active")).toBe(false);
+    expect(app.state.machine.state).toBe("ready");
+  });
+
+  it("is greyed with the Set Home reason", async () => {
+    const { app } = await startApp();
+    app.store.update((s) => ({ machine: { ...s.machine, state: "no_plotter" } }));
+    const root = shadow(await mount<Lit>("rp-plotbar"));
+    const setHome = button(root, "Set Home");
+    expect(setHome.getAttribute("aria-disabled")).toBe("true");
+    setHome.click();
+    expect(app.state.notice?.message).toBe("No plotter connected. Plug in the USB cable and the power adapter.");
   });
 });

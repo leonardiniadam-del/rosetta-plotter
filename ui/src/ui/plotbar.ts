@@ -11,6 +11,10 @@ interface PlotButton {
   label: string;
   iconName?: IconName;
   primary?: boolean;
+  /** Waiting for its second click (Set Home's Confirm Home). */
+  active?: boolean;
+  /** The tooltip, when it isn't the label. */
+  tip?: string;
   reason: string | null;
   run: () => void;
 }
@@ -51,6 +55,10 @@ export class RpPlotbar extends AppElement {
         margin: 0 6px 0 2px;
         color: var(--text);
       }
+      button.active {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
       .waiting {
         color: var(--text-dim);
       }
@@ -74,6 +82,14 @@ export class RpPlotbar extends AppElement {
     }
     const waiting = WAITING[state] ?? null;
     return [
+      {
+        label: s.homing ? "Confirm Home" : "Set Home",
+        iconName: "home",
+        active: s.homing,
+        tip: s.homing ? "Slide the pen to the HOME corner, then click again (Esc cancels)" : "Set Home: let go of the motors, slide the pen to HOME, then click again",
+        reason: waiting ?? disabledReason("setHome", s),
+        run: () => void app.setHome(),
+      },
       { label: "Start", iconName: "play", primary: true, reason: waiting ?? disabledReason("start", s), run: () => void app.startPlot() },
       { label: "Pause", iconName: "pause", reason: waiting ?? disabledReason("pause", s), run: () => app.pause() },
       { label: "Stop", iconName: "stop", reason: waiting ?? disabledReason("stop", s), run: () => app.stopPlot() },
@@ -106,9 +122,9 @@ export class RpPlotbar extends AppElement {
     const waiting = WAITING[this.s.plot.state];
     return html`${this.times()}${waiting ? html`<span class="waiting">${waiting}</span>` : nothing}${this.buttons().map(
       (b) => html`<button
-        class=${b.primary ? "primary" : ""}
+        class=${[b.primary ? "primary" : "", b.active ? "active" : ""].filter(Boolean).join(" ")}
         aria-disabled=${b.reason ? "true" : "false"}
-        title=${b.reason ?? b.label}
+        title=${b.reason ?? b.tip ?? b.label}
         @click=${() => (b.reason ? this.app.explain(b.reason) : b.run())}
       >
         ${b.iconName ? icon(b.iconName) : nothing}${b.label}
