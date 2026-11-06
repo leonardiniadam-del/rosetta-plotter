@@ -65,3 +65,53 @@ describe("moving in screen directions", () => {
     expect([x, y]).toEqual([6.35 - 1, 6.35]);
   });
 });
+
+describe("Set plotter orientation: two picks", () => {
+  it("asks for HOME's corner, then the X corner, then turns the plate", async () => {
+    const { app, fake } = await startApp();
+    app.startOrienting();
+    expect(app.state.orienting).toEqual({ home: null });
+    expect(app.state.notice?.message).toBe("Click the corner where HOME is on your plotter, as you face it.");
+    await app.pickCorner("ne");
+    expect(app.state.orienting).toEqual({ home: "ne" });
+    expect(app.state.notice?.message).toBe("Click the corner the pen moves toward along X (along the rail).");
+    await app.pickCorner("se");
+    expect(fake.called("set_orientation")).toEqual([["ne-v"]]);
+    expect(app.state.orienting).toBeNull();
+    expect(app.state.notice).toBeNull();
+  });
+
+  it("ignores a second corner that doesn't share an edge with HOME's", async () => {
+    const { app, fake } = await startApp();
+    app.startOrienting();
+    await app.pickCorner("nw");
+    await app.pickCorner("se");
+    expect(fake.called("set_orientation")).toEqual([]);
+    expect(app.state.orienting).toEqual({ home: "nw" });
+  });
+
+  it("Esc cancels the pick before it cancels Set Home", async () => {
+    const { app } = await startApp();
+    await app.setHome(); // homing: the motors are off
+    app.startOrienting();
+    handleShortcut(app, new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(app.state.orienting).toBeNull();
+    expect(app.state.notice).toBeNull();
+    expect(app.state.homing).toBe(true);
+  });
+
+  it("can't start during a plot", async () => {
+    const { app } = await readyToPlot();
+    await app.startPlot();
+    app.startOrienting();
+    expect(app.state.orienting).toBeNull();
+    expect(app.state.notice?.message).toBe("A plot is running.");
+  });
+
+  it("Reset goes back to the standard view", async () => {
+    const { app, fake } = await startApp();
+    await app.setPlotterOrientation("sw-h");
+    await app.resetOrientation();
+    expect(fake.called("set_orientation").at(-1)).toEqual(["nw-h"]);
+  });
+});

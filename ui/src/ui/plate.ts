@@ -8,7 +8,7 @@ import type { ViewRequest } from "../app/app";
 import type { PieceInfo, PlacementData } from "../bridge/contract";
 import { angleAt, GRID, gridLines, handleAt, hitPiece, JOB_MIME, linesToPath, marqueeHits, rectFrom, snapAngle, type IdBox } from "../canvas/interaction";
 import { cameraMatrix, fitCamera, panBy, toMachine, toScreen, zoomAt, type Camera, type Size } from "../geometry/camera";
-import { orientMatrix, type OrientationCode } from "../geometry/orientation";
+import { neighbours, orientMatrix, type Corner, type OrientationCode } from "../geometry/orientation";
 import { pointAt, routeOf, routePath, timeAtPendown } from "../geometry/route";
 import { pieceMatrix, rotateAboutCenter, scaleFromHandle, type Box, type Handle, type Point } from "../geometry/placement";
 import { disabledReason } from "../state/reasons";
@@ -38,6 +38,10 @@ function samePlacement(a: PlacementData, b: PlacementData): boolean {
 function inkColor(color: string): string {
   return color === "#000000" ? "var(--ink-black)" : color;
 }
+
+/** Set plotter orientation's corner markers: their size, and how near a click must be. */
+const PICK_PX = 12;
+const PICK_RADIUS_PX = 12;
 
 export class RpPlate extends AppElement {
   static styles = [
@@ -145,6 +149,16 @@ export class RpPlate extends AppElement {
         fill: none;
         stroke: var(--accent);
         stroke-width: 1px;
+      }
+      .pick {
+        fill: var(--accent);
+        stroke: var(--panel);
+        stroke-width: 1px;
+      }
+      .pick.chosen {
+        fill: var(--panel);
+        stroke: var(--accent);
+        stroke-width: 2px;
       }
       .handle {
         fill: var(--panel);
@@ -352,6 +366,12 @@ export class RpPlate extends AppElement {
     if (event.button !== 0) return;
     this.focus();
     const s = this.s;
+    if (s.orienting) {
+      // Picking the orientation: only the corner markers answer a click.
+      const corner = this.pickAt(screen);
+      if (corner) void this.app.pickCorner(corner);
+      return;
+    }
     if (tool === "zoom") {
       this.camera = zoomAt(this.camera, event.altKey ? 1 / 1.5 : 1.5, screen);
       this.requestUpdate();
@@ -532,7 +552,7 @@ export class RpPlate extends AppElement {
         <g clip-path="url(#printable)">${repeat(s.pieces, (p) => p.id, (piece) => this.piece(piece, "ink"))}</g>
         ${this.drawnSoFar()} ${this.previewRoute()}
       </g>
-      ${this.selection()} ${this.crosshair()} ${this.previewDot()} ${this.marquee()}
+      ${this.selection()} ${this.crosshair()} ${this.previewDot()} ${this.marquee()} ${this.picks()}
     </svg>`;
   }
 
@@ -683,6 +703,40 @@ export class RpPlate extends AppElement {
       <line class="cross" x1=${cx} y1=${cy + 3} x2=${cx} y2=${cy + r} />
       <rect class="cross-box" x=${cx - 3} y=${cy - 3} width="6" height="6" />
     </g>`;
+  }
+
+  /** The reach (or, with no model, the paper) as a box on screen, its corners named by where they are on screen. */
+  private screenCorners(): Record<Corner, Point> {
+    const reach = reachOf(this.s);
+    const m = this.s.material;
+    const [x0, y0, x1, y1] = reach ? [0, 0, reach[0], reach[1]] : [m.x, m.y, m.x + m.width, m.y + m.height];
+    const box = rectFrom(toScreen(this.camera, [x0, y0]), toScreen(this.camera, [x1, y1]));
+    const right = box.x + box.width;
+    const bottom = box.y + box.height;
+    return { nw: [box.x, box.y], ne: [right, box.y], se: [right, bottom], sw: [box.x, bottom] };
+  }
+
+  /** The corners a click can pick now: all four, then the two next to HOME's. */
+  private pickable(): Corner[] {
+    const home = this.s.orienting?.home;
+    return home ? neighbours(home) : ["nw", "ne", "se", "sw"];
+  }
+
+  private pickAt(screen: Point): Corner | null {
+    const corners = this.screenCorners();
+    return this.pickable().find((c) => Math.hypot(screen[0] - corners[c][0], screen[1] - corners[c][1]) <= PICK_RADIUS_PX) ?? null;
+  }
+
+  private picks() {
+    const picking = this.s.orienting;
+    if (!picking) return nothing;
+    const corners = this.screenCorners();
+    const half = PICK_PX / 2;
+    const marker = (corner: Corner, chosen: boolean) => {
+      const [cx, cy] = corners[corner];
+      return svg`<rect class=${chosen ? "pick chosen" : "pick"} data-corner=${corner} x=${cx - half} y=${cy - half} width=${PICK_PX} height=${PICK_PX} />`;
+    };
+    return svg`${picking.home ? marker(picking.home, true) : nothing}${this.pickable().map((c) => marker(c, false))}`;
   }
 
   private marquee() {

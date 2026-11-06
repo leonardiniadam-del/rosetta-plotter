@@ -14,7 +14,8 @@ function isTyping(event: KeyboardEvent): boolean {
 /** Handle one key press. True if it was a shortcut, so the caller stops the browser's own action for it. */
 export function handleShortcut(app: App, event: KeyboardEvent): boolean {
   if (event.key === "Escape") {
-    if (app.state.preview) app.endPreview();
+    if (app.state.orienting) app.cancelOrienting();
+    else if (app.state.preview) app.endPreview();
     else if (app.state.homing) app.cancelHoming();
     else if (!modalOpen(app.state)) app.deselect();
     return false;

@@ -184,3 +184,23 @@ describe("plot commands", () => {
     expect(handleShortcut(app, new KeyboardEvent("keydown", { key: "p", ctrlKey: true }))).toBe(true);
   });
 });
+
+describe("plotter orientation in the View menu", () => {
+  it("offers Set and Reset, greyed when they can't work", async () => {
+    const { app } = await startApp();
+    const root = shadow(await mount("rp-menubar"));
+    await openMenu(root, "View");
+    expect(item(root, "Reset plotter orientation").getAttribute("aria-disabled")).toBe("true");
+    item(root, "Set plotter orientation…").click();
+    await settle();
+    expect(app.state.orienting).toEqual({ home: null });
+  });
+
+  it("greys Set plotter orientation during a plot", async () => {
+    const { app } = await readyToPlot();
+    await app.startPlot();
+    const root = shadow(await mount("rp-menubar"));
+    await openMenu(root, "View");
+    expect(item(root, "Set plotter orientation…").getAttribute("aria-disabled")).toBe("true");
+  });
+});

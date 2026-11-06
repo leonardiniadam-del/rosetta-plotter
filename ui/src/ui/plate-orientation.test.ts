@@ -110,3 +110,37 @@ describe("rp-plate in a turned orientation", () => {
     expect(app.state.summary).toBe(before);
   });
 });
+
+describe("rp-plate while picking the orientation", () => {
+  it("marks four corners, then the two next to HOME's, and a click picks one", async () => {
+    const { app, root, svg } = await plateIn("nw-h");
+    app.startOrienting();
+    await settle();
+    const picks = () => Array.from(root.querySelectorAll("rect.pick:not(.chosen)")) as SVGRectElement[];
+    expect(picks()).toHaveLength(4);
+    const centreOf = (r: SVGRectElement): Point => [
+      Number(r.getAttribute("x")) + Number(r.getAttribute("width")) / 2,
+      Number(r.getAttribute("y")) + Number(r.getAttribute("height")) / 2,
+    ];
+    const ne = picks().find((r) => r.dataset.corner === "ne") as SVGRectElement;
+    pointer(svg, "pointerdown", centreOf(ne));
+    pointer(svg, "pointerup", centreOf(ne));
+    await settle();
+    expect(app.state.orienting).toEqual({ home: "ne" });
+    expect(picks().map((r) => r.dataset.corner).sort()).toEqual(["nw", "se"]);
+    expect(root.querySelector("rect.pick.chosen")).not.toBeNull();
+  });
+
+  it("does nothing else with a click while picking", async () => {
+    const { app, fake, plate, svg } = await plateIn("nw-h");
+    app.startOrienting();
+    await settle();
+    const from = toScreen(plate.view, CENTRE);
+    pointer(svg, "pointerdown", from);
+    pointer(svg, "pointermove", [from[0] + 40, from[1]]);
+    pointer(svg, "pointerup", [from[0] + 40, from[1]]);
+    await settle();
+    expect(fake.called("piece_place")).toEqual([]);
+    expect(app.state.orienting).toEqual({ home: null });
+  });
+});

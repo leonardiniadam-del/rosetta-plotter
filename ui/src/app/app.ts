@@ -2,7 +2,7 @@
  * Everything the window can do. Each action checks why it might not work yet (spec §6) and explains it in
  * the strip, calls Python (plotter requests one at a time), and updates the store.
  */
-import { orientMatrix, screenToMachineDir, type OrientationCode } from "../geometry/orientation";
+import { codeFromPicks, orientMatrix, screenToMachineDir, type Corner, type OrientationCode } from "../geometry/orientation";
 import { BridgeError, type Client } from "../bridge/client";
 import type { AdvancedValues, MachineStatus, PlacementData, PlotProgress, PlotStatus } from "../bridge/contract";
 import { MAX_SCALE, pieceBox, resizeBox, rotateAboutCenter, type Point } from "../geometry/placement";
@@ -68,6 +68,9 @@ function problemOf(error: unknown): { message: string; details: string } {
 function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
+
+const PICK_HOME = "Click the corner where HOME is on your plotter, as you face it.";
+const PICK_X = "Click the corner the pen moves toward along X (along the rail).";
 
 export class App {
   /** The pointer's machine position; kept apart so moving the mouse only re-renders the status bar. */
@@ -255,6 +258,39 @@ export class App {
     this.store.update({ orientation: code });
     const reply = await this.attempt(() => this.client.call("set_orientation", code));
     if (!reply) this.store.update({ orientation: before });
+  }
+
+  /** Set plotter orientation: pick HOME's corner on the plate, then the corner X runs toward. */
+  startOrienting(): void {
+    if (this.blocked("orientation")) return;
+    this.store.update({ orienting: { home: null } });
+    this.notify({ kind: "info", message: PICK_HOME, keep: true });
+  }
+
+  async pickCorner(corner: Corner): Promise<void> {
+    const picking = this.state.orienting;
+    if (!picking) return;
+    if (!picking.home) {
+      this.store.update({ orienting: { home: corner } });
+      this.notify({ kind: "info", message: PICK_X, keep: true });
+      return;
+    }
+    const code = codeFromPicks(picking.home, corner);
+    if (!code) return; // not next to HOME's corner: keep waiting
+    this.cancelOrienting();
+    await this.setPlotterOrientation(code);
+  }
+
+  cancelOrienting(): void {
+    if (!this.state.orienting) return;
+    this.store.update((s) => ({
+      orienting: null,
+      notice: s.notice?.message === PICK_HOME || s.notice?.message === PICK_X ? null : s.notice,
+    }));
+  }
+
+  resetOrientation(): Promise<void> {
+    return this.setPlotterOrientation("nw-h");
   }
 
   async identify(model: number, penlift: number, label: string): Promise<void> {

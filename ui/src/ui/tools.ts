@@ -71,6 +71,13 @@ export class RpTools extends AppElement {
           run: () => void app.setHome(),
         },
         {
+          label: s.orienting ? "Click the plate's corners: HOME first, then the X corner (Esc cancels)" : "Set plotter orientation (match how your plotter sits)",
+          iconName: "orient",
+          pressed: s.orienting !== null,
+          reason: disabledReason("orientation", s),
+          run: () => (s.orienting ? app.cancelOrienting() : app.startOrienting()),
+        },
+        {
           label: "Trace outline",
           iconName: "trace",
           pressed: s.plot.state === "tracing",

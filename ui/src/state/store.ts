@@ -1,5 +1,5 @@
 /** The app's one state, and how Lit components follow it. */
-import type { OrientationCode } from "../geometry/orientation";
+import type { Corner, OrientationCode } from "../geometry/orientation";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import type {
   AdvancedValues,
@@ -67,6 +67,8 @@ export interface AppState {
   jogStep: 1 | 10;
   /** How the plate is turned to match the plotter (orientation spec §1). */
   orientation: OrientationCode;
+  /** Set plotter orientation is waiting for its picks: HOME's corner, then the X corner. */
+  orienting: { home: Corner | null } | null;
   /** The W/H and W%/H% link in the control bar. */
   linkScale: boolean;
   view: ViewOptions;
@@ -118,6 +120,7 @@ export function initialState(): AppState {
     homing: false,
     jogStep: 1,
     orientation: "nw-h",
+    orienting: null,
     linkScale: true,
     view: { grid: true, margins: true, original: false },
     notice: null,

@@ -19,5 +19,5 @@ export const SHORTCUT_HELP: [action: string, keys: string][] = [
   ["Fit paper / Fit reach in window", "Ctrl+0 / Ctrl+Alt+0"],
   ["Zoom in / out", "Ctrl+= / Ctrl+-"],
   ["Nudge the selection 1 mm (Shift: 10 mm)", "Arrow keys"],
-  ["Cancel Set Home, close menus, deselect", "Esc"],
+  ["Cancel a pick or Set Home, close menus, deselect", "Esc"],
 ];

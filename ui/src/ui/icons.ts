@@ -20,6 +20,7 @@ import home from "@tabler/icons/outline/home.svg?raw";
 import info from "@tabler/icons/outline/info-circle.svg?raw";
 import link from "@tabler/icons/outline/link.svg?raw";
 import mark from "@tabler/icons/outline/pencil.svg?raw";
+import orient from "@tabler/icons/outline/axis-x.svg?raw";
 import penDown from "@tabler/icons/outline/arrow-bar-to-down.svg?raw";
 import penUp from "@tabler/icons/outline/arrow-bar-to-up.svg?raw";
 import plug from "@tabler/icons/outline/plug-connected.svg?raw";
@@ -41,7 +42,7 @@ import zoom from "@tabler/icons/outline/zoom-in.svg?raw";
 
 const ICONS = {
   alert, arrowDown, arrowLeft, arrowRight, arrowUp, center, check, chevronDown, crosshair, duplicate, eye, eyeOff,
-  file, filePdf, fileVector, hand, home, info, link, mark, pause, penDown, penUp, play, plug, plugOff, plus, pointer,
+  file, filePdf, fileVector, hand, home, info, link, mark, orient, pause, penDown, penUp, play, plug, plugOff, plus, pointer,
   rotate, rotatePaper, route, settings, stop, trace, trash, unlink, x, zoom,
 };
 

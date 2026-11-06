@@ -169,6 +169,13 @@ export class RpMenubar extends AppElement {
           { label: "Zoom in", shortcut: "Ctrl+=", run: () => app.requestView({ kind: "zoom", factor: 1.25 }) },
           { label: "Zoom out", shortcut: "Ctrl+-", run: () => app.requestView({ kind: "zoom", factor: 0.8 }) },
           "separator",
+          { label: "Set plotter orientation…", reason: disabledReason("orientation", s), run: () => app.startOrienting() },
+          {
+            label: "Reset plotter orientation",
+            reason: disabledReason("orientation", s) ?? (s.orientation === "nw-h" ? "Already the standard view." : null),
+            run: () => void app.resetOrientation(),
+          },
+          "separator",
           { heading: "Units" },
           ...UNITS.map((u) => ({ label: UNIT_NAMES[u], checked: s.units === u, radio: true, run: () => void app.setUnits(u) })),
           "separator",
