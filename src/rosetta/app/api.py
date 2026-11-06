@@ -197,7 +197,13 @@ class Api:
     def plotter_identify(self, model, penlift, label=""):
         if model not in MODELS or penlift not in (1, 2, 3) or not isinstance(label, str) or len(label) > MAX_LABEL:
             raise ValueError(f"Bad plotter identity: {model!r}, {penlift!r}, {label!r}")
+        showing = self._orientation()
         self._machine.identify(model, penlift, label)
+        # The name is the key, so naming the plotter gives it a new one: keep the view on screen with it.
+        key = self._machine.profile_key()
+        if key and key not in self._store.settings.orientations:
+            with self._store.change() as settings:
+                settings.orientations[key] = showing
         self._load_profile()
         return {"machine": self._machine.status(), "orientation": self._orientation()}
 

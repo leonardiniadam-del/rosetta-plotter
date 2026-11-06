@@ -150,4 +150,21 @@ describe("jog pad: press and hold", () => {
     expect(release).toHaveBeenCalled();
     app.jogRelease();
   });
+
+  it("lets go when the pointer slides off the arrow", async () => {
+    const { app } = await startApp();
+    await app.setHome();
+    await app.setHome();
+    const root = shadow(await mount("rp-plotter"));
+    await settle();
+    const right = labelled(root, "Move pen right");
+    right.getBoundingClientRect = () => ({ left: 0, top: 0, right: 32, bottom: 32, width: 32, height: 32, x: 0, y: 0, toJSON: () => ({}) });
+    press(right, "pointerdown");
+    const release = vi.spyOn(app, "jogRelease");
+    right.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 16, clientY: 16, pointerId: 1 }));
+    expect(release).not.toHaveBeenCalled();
+    right.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 80, clientY: 16, pointerId: 1 }));
+    expect(release).toHaveBeenCalled();
+    app.jogRelease();
+  });
 });

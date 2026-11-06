@@ -335,3 +335,14 @@ def test_orientation_rejects_unknown_codes_and_never_touches_the_plot(tmp_path):
     assert not api.set_orientation("up")["ok"]
     ok(api.set_orientation("se-h"))
     assert ok(api.plot_prepare()) == before
+
+
+def test_naming_a_plotter_keeps_the_orientation_on_screen(tmp_path):
+    """Identifying (or renaming) gives the plotter a new key; the view the student just set goes with it."""
+    api, _sink = make_api(tmp_path, _plotter())
+    before = ok(api.plotter_scan())["machine"]["nickname"]
+    ok(api.set_orientation("ne-v"))
+    reply = ok(api.plotter_identify(2, 1, "Wall"))
+    assert reply["machine"]["nickname"] != before  # a new key
+    assert reply["orientation"] == "ne-v"
+    assert ok(api.plotter_scan())["orientation"] == "ne-v"

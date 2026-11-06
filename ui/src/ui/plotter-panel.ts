@@ -97,6 +97,12 @@ export class RpPlotterPanel extends AppElement {
       title=${reason ? `${label}: ${reason}` : `${label}. Hold to keep moving`}
       aria-disabled=${reason ? "true" : "false"}
       @pointerdown=${down}
+      @pointermove=${(event: PointerEvent) => {
+        // The button holds the pointer, so pointerleave never comes: check where the pointer is instead.
+        const box = (event.currentTarget as Element).getBoundingClientRect();
+        const off = event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom;
+        if (off) this.app.jogRelease();
+      }}
       @pointerup=${this.releaseHold}
       @pointercancel=${this.releaseHold}
       @lostpointercapture=${this.releaseHold}
