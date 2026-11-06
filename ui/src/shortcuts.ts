@@ -49,7 +49,7 @@ export function handleShortcut(app: App, event: KeyboardEvent): boolean {
   if (key in ARROWS) {
     if (app.state.selection.length === 0) return false;
     const step = event.shiftKey ? 10 : 1;
-    const [dx, dy] = ARROWS[key];
+    const [dx, dy] = app.machineDirection(...ARROWS[key]); // arrows move the way the screen shows
     void app.moveSelectionBy(dx * step, dy * step);
     return true;
   }

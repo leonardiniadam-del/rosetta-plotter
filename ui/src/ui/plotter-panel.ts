@@ -107,13 +107,13 @@ export class RpPlotterPanel extends AppElement {
         >Test mark</button>
       </div>
       <div class="pad" role="group" aria-label="Move the pen (pen up)">
-        <span></span>${this.button("Move pen back", "arrowUp", move, () => void this.app.jog(0, -1))}<span></span>
-        ${this.button("Move pen left", "arrowLeft", move, () => void this.app.jog(-1, 0))}
+        <span></span>${this.button("Move pen up (on screen)", "arrowUp", move, () => void this.app.jog(0, -1))}<span></span>
+        ${this.button("Move pen left (on screen)", "arrowLeft", move, () => void this.app.jog(-1, 0))}
         <button class="step" aria-label=${`Step ${s.jogStep} mm (click to change)`} @click=${() => this.app.setJogStep(s.jogStep === 1 ? 10 : 1)}>
           ${s.jogStep} mm
         </button>
-        ${this.button("Move pen right", "arrowRight", move, () => void this.app.jog(1, 0))}
-        <span></span>${this.button("Move pen toward you", "arrowDown", move, () => void this.app.jog(0, 1))}<span></span>
+        ${this.button("Move pen right (on screen)", "arrowRight", move, () => void this.app.jog(1, 0))}
+        <span></span>${this.button("Move pen down (on screen)", "arrowDown", move, () => void this.app.jog(0, 1))}<span></span>
       </div>`;
   }
 }

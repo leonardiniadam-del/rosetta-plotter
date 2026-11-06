@@ -89,7 +89,7 @@ describe("Plotter panel", () => {
     await settle();
     labelled(root, "Step 1 mm").click();
     await settle();
-    labelled(root, "Move pen toward you").click();
+    labelled(root, "Move pen down (on screen)").click();
     await settle();
     expect(fake.called("plotter_jog")).toEqual([[1, 0], [0, 10]]);
   });

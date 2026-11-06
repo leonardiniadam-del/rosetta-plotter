@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readyToPlot, startApp } from "../test/setup";
+import { handleShortcut } from "../shortcuts";
+import { readyToPlot, settle, startApp } from "../test/setup";
 
 describe("plate orientation", () => {
   it("starts in the saved orientation and changes it", async () => {
@@ -38,5 +39,29 @@ describe("plate orientation", () => {
     await app.setPlotterOrientation("up" as never);
     expect(app.state.orientation).toBe("nw-h");
     expect(app.state.notice?.kind).toBe("error");
+  });
+});
+
+describe("moving in screen directions", () => {
+  it("jogs the way the screen shows", async () => {
+    const { app, fake } = await startApp();
+    await app.setHome();
+    await app.setHome();
+    await app.setPlotterOrientation("ne-v"); // +X down, +Y left
+    await app.jog(0, 1); // screen down
+    expect(fake.called("plotter_jog")).toEqual([[1, 0]]);
+    await app.jog(1, 0); // screen right = machine -Y
+    expect(fake.called("plotter_jog").at(-1)).toEqual([0, -1]);
+  });
+
+  it("nudges a drawing the way the screen shows", async () => {
+    const { app, fake } = await startApp();
+    await app.importFiles();
+    await app.placeJob("job-1");
+    await app.setPlotterOrientation("se-h"); // +X left
+    handleShortcut(app, new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    await settle();
+    const [, x, y] = fake.called("piece_place").at(-1) as [string, number, number];
+    expect([x, y]).toEqual([6.35 - 1, 6.35]);
   });
 });

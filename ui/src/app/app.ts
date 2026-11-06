@@ -2,7 +2,7 @@
  * Everything the window can do. Each action checks why it might not work yet (spec §6) and explains it in
  * the strip, calls Python (plotter requests one at a time), and updates the store.
  */
-import type { OrientationCode } from "../geometry/orientation";
+import { orientMatrix, screenToMachineDir, type OrientationCode } from "../geometry/orientation";
 import { BridgeError, type Client } from "../bridge/client";
 import type { AdvancedValues, MachineStatus, PlacementData, PlotProgress, PlotStatus } from "../bridge/contract";
 import { MAX_SCALE, pieceBox, resizeBox, rotateAboutCenter, type Point } from "../geometry/placement";
@@ -292,10 +292,18 @@ export class App {
     this.store.update({ homing: false });
   }
 
+  /** A direction on screen as a machine direction, for the plotter's orientation. */
+  machineDirection(dx: number, dy: number): Point {
+    const [x, y] = screenToMachineDir(orientMatrix(this.state.orientation), [dx, dy]);
+    return [x + 0, y + 0]; // + 0 turns -0 into 0
+  }
+
+  /** Move the pen one step (pen up) in a screen direction: (1, 0) is right on screen. */
   async jog(dx: number, dy: number): Promise<void> {
     if (this.blocked("move")) return;
     const step = this.state.jogStep;
-    await this.plotterAction(() => this.client.hardware("plotter_jog", dx * step, dy * step));
+    const [x, y] = this.machineDirection(dx, dy);
+    await this.plotterAction(() => this.client.hardware("plotter_jog", x * step, y * step));
   }
 
   async movePenTo([x, y]: Point): Promise<void> {
@@ -530,7 +538,7 @@ export class App {
     });
   }
 
-  /** Where double-clicking a job puts its top-left: the paper's corner nearest Home, inset by the margin. */
+  /** Where double-clicking a job puts its corner nearest HOME: the paper's corner nearest Home, inset by the margin. */
   marginCorner(): Point {
     return [this.state.margin, this.state.margin];
   }
@@ -704,7 +712,7 @@ export class App {
     await this.setPlacement(one.piece.id, next);
   }
 
-  /** W% / H% (or one Scale % while linked); the top-left stays put. */
+  /** W% / H% (or one Scale % while linked); the corner nearest HOME stays put. */
   async setScale(scale: number, scaleY: number): Promise<void> {
     const one = this.single();
     if (!one) return;
