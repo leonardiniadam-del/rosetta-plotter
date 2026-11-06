@@ -144,3 +144,20 @@ describe("rp-plate while picking the orientation", () => {
     expect(app.state.orienting).toEqual({ home: null });
   });
 });
+
+describe("rp-plate: the pick shows every corner", () => {
+  it("zooms out to the whole reach when the pick starts", async () => {
+    const { app, root } = await plateIn("nw-h");
+    app.requestView({ kind: "fit-paper" });
+    await settle();
+    app.startOrienting();
+    await settle();
+    const picks = Array.from(root.querySelectorAll("rect.pick")) as SVGRectElement[];
+    expect(picks).toHaveLength(4);
+    for (const r of picks) {
+      const x = Number(r.getAttribute("x"));
+      const y = Number(r.getAttribute("y"));
+      expect(x >= 0 && x <= 800 && y >= 0 && y <= 600).toBe(true);
+    }
+  });
+});

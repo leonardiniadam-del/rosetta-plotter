@@ -269,6 +269,7 @@ export class App {
     if (this.blocked("orientation")) return;
     this.store.update({ orienting: { home: null } });
     this.notify({ kind: "info", message: PICK_HOME, keep: true });
+    this.requestView({ kind: "fit-reach" }); // the picks sit on the reach's corners: show all four
   }
 
   async pickCorner(corner: Corner): Promise<void> {
