@@ -1,4 +1,4 @@
-"""Open an artwork file (SVG, PDF, or PDF-compatible AI) and turn it into plottable shapes."""
+"""Open an artwork file (SVG, PDF, or AI: PDF-compatible, or the old PostScript kind Rhino exports) and turn it into plottable shapes."""
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -15,6 +15,7 @@ from rosetta.issues import (
     scan_shapes,
     scan_skipped,
 )
+from rosetta.ai_ps import ai_ps_to_svg, is_postscript_ai
 from rosetta.pdf_import import pdf_page_to_svg
 from rosetta.svgdoc import normalize
 
@@ -56,6 +57,8 @@ def load_artwork(path: Path, page: int = 0) -> Artwork:
 
     if extension == ".svg":
         doc, name, extra_issues = _read_svg(path)
+    elif extension == ".ai" and is_postscript_ai(path):
+        doc, name, extra_issues = _read_ai_ps(path)
     else:
         doc, name, extra_issues = _read_pdf(path, page)
     preview_svg = etree.tostring(doc.root, encoding="unicode")
@@ -97,6 +100,16 @@ def _read_svg(path: Path):
     except OSError as exc:
         raise _unreadable(path) from exc
     return normalize(raw), path.stem, []
+
+
+def _read_ai_ps(path: Path):
+    """Rhino's old-style (PostScript) Illustrator export. Read like a PDF page: pt sizes, y flipped."""
+    try:
+        page = ai_ps_to_svg(path)
+    except OSError as exc:
+        raise _unreadable(path) from exc
+    doc = normalize(page.svg.encode("utf-8"), source_hint="pdf")
+    return doc, path.stem, [pdf_text_issue()] if page.has_text else []
 
 
 def _read_pdf(path: Path, page: int):

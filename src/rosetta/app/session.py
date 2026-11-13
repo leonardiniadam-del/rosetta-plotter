@@ -15,6 +15,7 @@ from rosetta.errors import ImportProblem, UserProblem
 from rosetta.geometry import rotated_size
 from rosetta.loader import Artwork, load_artwork
 from rosetta.models import MachineModel
+from rosetta.ai_ps import is_postscript_ai
 from rosetta.pdf_import import page_count
 
 DUPLICATE_OFFSET_MM = 10.0
@@ -49,6 +50,8 @@ def pages_in(path) -> int:
     path = Path(path)
     if not path.is_file():
         raise ImportProblem(f"The file {path.name} can't be found.")
+    if path.suffix.lower() == ".ai" and is_postscript_ai(path):
+        return 1  # Rhino's old-style Illustrator export: one drawing, no pages
     if path.suffix.lower() in (".pdf", ".ai"):
         return page_count(path)
     return 1
