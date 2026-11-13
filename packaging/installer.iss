@@ -52,6 +52,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; Ticked by default. Adding a printer needs administrator rights, so the [Code] below asks Windows for them once,
+; at the end of setup; if that's refused, everything else is still installed and the Start menu shortcut can add
+; the printer later.
+Name: "printer"; Description: "Add the ""Rosetta Plotter"" printer, so any program can print into the app (Windows asks for permission)"; GroupDescription: "Printing:"
 
 [Files]
 Source: "{#AppBuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -59,8 +63,8 @@ Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 ; Copyright notices and licenses for the bundled third-party software (written by scripts\make_notices.py).
 Source: "THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "QuickStart.html"; DestDir: "{app}"; Flags: ignoreversion
-; The optional "Rosetta Plotter" printer (print from any program into the app). It needs administrator
-; rights, so it is not added during this per-user install: the Start menu shortcut below adds it.
+; The optional "Rosetta Plotter" printer (print from any program into the app). The "printer" task adds it at
+; the end of setup (see [Code]); the Start menu shortcut below adds it later if that was skipped or refused.
 Source: "printer\*"; DestDir: "{app}\Printer"; Flags: ignoreversion
 ; Extracted to {tmp} and run by the [Code] below only when WebView2 is missing.
 Source: "vendor\{#WebView2Installer}"; Flags: dontcopy
@@ -120,8 +124,47 @@ begin
       'IT help desk to install WebView2 Runtime.', mbError, MB_OK, IDOK);
 end;
 
+const
+  PrinterKey = 'SYSTEM\CurrentControlSet\Control\Print\Printers\Rosetta Plotter';
+  ErrorCancelled = 1223;  { the student chose No in Windows' permission prompt }
+
+function PrinterInstalled: Boolean;
+begin
+  Result := RegKeyExists(HKLM64, PrinterKey);
+end;
+
+{ Runs printer\Install-RosettaPrinter.ps1 with administrator rights ("runas" makes Windows ask for them; an
+  administrator install already has them, so Windows doesn't ask again), then checks the printer is there. }
+procedure InstallPrinter;
+var
+  Params: String;
+  ResultCode: Integer;
+  Ran: Boolean;
+begin
+  WizardForm.StatusLabel.Caption := 'Adding the Rosetta Plotter printer...';
+  Params := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\Printer\Install-RosettaPrinter.ps1') + '"';
+  Ran := ShellExec('runas', ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode);
+  if PrinterInstalled then
+    Exit;
+  Log(Format('Printer install did not take (ran: %d, code: %d)', [Ord(Ran), ResultCode]));
+  if (not Ran) and (ResultCode = ErrorCancelled) then
+    SuppressibleMsgBox('Rosetta Plotter is installed. The Rosetta Plotter printer was not added, because ' +
+      'Windows'' permission wasn''t given.' + #13#10#13#10 +
+      'To add it later, open the Start menu and run "Install the Rosetta Plotter printer". ' +
+      'If you don''t have administrator rights, ask your instructor or IT help desk.', mbInformation, MB_OK, IDOK)
+  else
+    SuppressibleMsgBox('Rosetta Plotter is installed, but the Rosetta Plotter printer could not be added.' + #13#10#13#10 +
+      'Open the Start menu and run "Install the Rosetta Plotter printer": it shows the reason. ' +
+      'Everything else in Rosetta Plotter works without the printer.', mbInformation, MB_OK, IDOK);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if (CurStep = ssPostInstall) and not WebView2Installed then
+  if CurStep <> ssPostInstall then
+    Exit;
+  if not WebView2Installed then
     InstallWebView2;
+  if WizardIsTaskSelected('printer') and not PrinterInstalled then
+    InstallPrinter;
 end;

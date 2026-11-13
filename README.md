@@ -32,7 +32,9 @@ administrator rights once). It is Windows' own "Microsoft Print To PDF" driver o
 `%ProgramData%\Rosetta Plotter\Print\print.pdf`, so printing to it from Illustrator, Rhino or anything else
 writes that file without asking. While the app is open, `rosetta.app.printinbox` sees each new print, copies it
 to `%APPDATA%\RosettaPlotter\prints` and imports the copy into the Jobs list. `Remove Rosetta Printer.bat`
-takes the printer away again. The student installer puts both in `{app}\Printer` with a Start menu shortcut.
+takes the printer away again. The student installer puts both in `{app}\Printer` with a Start menu shortcut, and
+its "Add the Rosetta Plotter printer" checkbox (ticked by default) runs the install script at the end of setup,
+after one Windows permission prompt.
 
 ## Running the app
 
