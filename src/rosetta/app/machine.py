@@ -36,6 +36,13 @@ PLOTTING = "The plotter is in the middle of a plot. Finish or cancel the plot fi
 STOPPED_MOVING = ("The plotter stopped before the move finished. Slide the pen Home, "
                   "then click It's in the corner.")
 NO_POWER = "The power adapter isn't plugged in. The pen can't move without it."
+NOT_AT_PEN_CHANGE = "The pen can only be lined up while the plot is waiting for a pen."
+ALIGN_LOST = "The plotter stopped while the pen was being lined up."
+
+
+class AlignLost(UserProblem):
+    """The plotter stopped or vanished while a new pen was being lined up: where the pen is isn't known."""
+
 NAME_NOT_SAVED = "The plotter didn't accept its new name. Check the USB cable and try again."
 NO_RETURN = ("The plotter didn't come back after saving its name. Unplug the USB cable, "
              "plug it back in, and try again.")
@@ -79,6 +86,8 @@ class Machine:
         self.pen_type = "fineliner"
         self.advanced = Advanced()
         self._clash_logged: tuple[int, int] | None = None  # the pen-up/pen-down clash last logged
+        self._align: Plotter | None = None  # at a pen change: the connection used to line the new pen up
+        self._align_pen_down = False
 
     # What the page sees.
 
@@ -94,7 +103,7 @@ class Machine:
             "label": identity.label if identity else None,
             "nickname": self.nickname,
             "old_firmware": self.old_firmware,
-            "position": list(self.position) if self.state is MachineState.READY else None,
+            "position": list(self.position) if self.state is MachineState.READY or self._align else None,
             "pen_down": self.pen_down,
             "pen_type": self.pen_type,
         }
@@ -252,6 +261,90 @@ class Machine:
             self.state = MachineState.PLOTTING
         return settings
 
+    # Step 5, at a pen change: lining the new pen up with lines already drawn. The plot has let go of
+    # the USB port and the pen is Home, so EMS's "connected means (0, 0)" holds for this connection.
+
+    def align_goto(self, x: float, y: float) -> tuple[float, float]:
+        """Pen-up move to (x, y) mm from Home. Returns where the pen is."""
+        with self._aligning() as plotter:
+            plotter.goto(float(x), float(y))
+            self.position = plotter.position()
+        return self.position
+
+    def align_jog(self, dx: float, dy: float) -> tuple[float, float]:
+        """Nudge the pen as it is, up or down (a down pen is lifted, moved, and lowered again)."""
+        with self._aligning() as plotter:
+            was_down = self._align_pen_down
+            plotter.jog(float(dx), float(dy))  # a move lifts the pen
+            self.position = plotter.position()
+            if was_down:
+                plotter.pen_down()
+        return self.position
+
+    def align_pen(self, down: bool) -> None:
+        with self._aligning() as plotter:
+            if down:
+                plotter.pen_down()
+            else:
+                plotter.pen_up()
+            self._align_pen_down = bool(down)
+
+    def align_end(self) -> None:
+        """Lift the pen, go back Home and let go of the USB port, so the plot can carry on. Does nothing
+        if the pen was never moved. AlignLost if the plotter stopped on the way."""
+        if not self._lock.acquire(timeout=HANDOVER_WAIT_S):
+            raise UserProblem(BUSY)
+        try:
+            plotter, self._align = self._align, None
+            self._align_pen_down = False
+            if plotter is None:
+                return
+            try:
+                plotter.clear_pause()
+                plotter.pen_up()
+                plotter.goto(0.0, 0.0)
+            except (PlotterStopped, RuntimeError) as lost:
+                raise AlignLost(ALIGN_LOST, details=str(lost)) from lost
+            finally:
+                with contextlib.suppress(Exception):
+                    plotter.disconnect()
+                self.position = (0.0, 0.0)
+        finally:
+            self._lock.release()
+
+    @contextlib.contextmanager
+    def _aligning(self):
+        """One request at a time, only mid-plot. Connects on first use; a stop means the pen is lost."""
+        if not self._lock.acquire(blocking=False):
+            raise UserProblem(BUSY)
+        try:
+            if self.state is not MachineState.PLOTTING:
+                raise UserProblem(NOT_AT_PEN_CHANGE)
+            if self._align is None:
+                plotter = self._new_plotter()
+                try:
+                    connected = plotter.connect(self._settings())
+                except Exception:
+                    logger.info("Couldn't connect to line the pen up", exc_info=True)
+                    connected = False
+                if not connected:
+                    raise UserProblem(NOT_CONNECTED)
+                self._align, self._align_pen_down = plotter, False
+                self.position = (0.0, 0.0)
+            plotter = self._align
+            plotter.clear_pause()
+            try:
+                self._check_power(plotter)
+                yield plotter
+            except (PlotterStopped, RuntimeError) as lost:
+                self._align = None
+                self._align_pen_down = False
+                with contextlib.suppress(Exception):
+                    plotter.disconnect()
+                raise AlignLost(ALIGN_LOST, details=str(lost)) from lost
+        finally:
+            self._lock.release()
+
     def after_plot(self, at_home: bool) -> dict:
         """Take the plotter back after a plot. at_home: the pen is known to be Home (the plot finished,
         or it was sent Home); otherwise the motors go off so the pen can be slid Home by hand."""
@@ -323,15 +416,19 @@ class Machine:
 
     def request_stop(self) -> None:
         """Stop a move in progress at its next step, pen up. Safe from any thread, busy or not."""
-        plotter = self._plotter
-        if plotter is not None:
-            plotter.request_pause()
+        for plotter in (self._plotter, self._align):
+            if plotter is not None:
+                plotter.request_pause()
 
     def shutdown(self) -> None:
         """The app is closing: stop any move, lift the pen and let go of the USB port."""
         self.request_stop()
         if self._lock.acquire(timeout=SHUTDOWN_WAIT_S):
             try:
+                align, self._align = self._align, None
+                if align is not None:
+                    with contextlib.suppress(Exception):
+                        align.disconnect()  # lifts the pen first
                 self._drop()
             finally:
                 self._lock.release()

@@ -12,6 +12,19 @@ from rosetta.models import MachineModel
 from rosetta.svgdoc import INKSCAPE_NS, SVG_NS
 
 
+def shift_layer(svg: str, number: int, dx: float, dy: float) -> str:
+    """The plot SVG with one pen's layer moved by (dx, dy) mm: a new pen whose nib sits a little off
+    the last one's is lined up this way, without touching the other layers."""
+    root = etree.fromstring(svg.encode("utf-8"))
+    for layer in root:
+        if layer.get(f"{{{INKSCAPE_NS}}}label") == str(number):
+            layer.set("transform", f"translate({dx:.4f},{dy:.4f})")
+            break
+    else:
+        raise ValueError(f"The plot has no layer {number}.")
+    return etree.tostring(root, encoding="unicode")
+
+
 def plot_svg(model: MachineModel, groups: list[ColorGroup]) -> str:
     travel_x, travel_y = model.travel_mm
     root = etree.Element(f"{{{SVG_NS}}}svg", nsmap={None: SVG_NS, "inkscape": INKSCAPE_NS})

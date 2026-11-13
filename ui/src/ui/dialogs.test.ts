@@ -93,6 +93,62 @@ describe("plot dialogs", () => {
     expect(app.state.plot.state).toBe("plotting");
   });
 
+  it("lines a new pen up with a drawn line, and plots it that far over", async () => {
+    const { app, fake } = await readyToPlot();
+    const dialogs = await mount<Lit>("rp-dialogs");
+    await app.startPlot();
+    await dialogs.updateComplete;
+    const root = shadow(dialogs);
+    expect(root.querySelector(".lineup")).toBeNull(); // the first pen has nothing to line up with
+    await app.plotAction("continue");
+    fake.finishLayer();
+    await settle();
+    await dialogs.updateComplete;
+    expect(app.state.plot.state).toBe("load_pen");
+    const press = (text: string) =>
+      (Array.from(root.querySelectorAll("button")).find((b) => b.textContent?.trim() === text || b.getAttribute("aria-label") === text) as HTMLButtonElement).click();
+    press("Nudge right (on screen)"); // nothing happens before the pen is on a line
+    await settle();
+    expect(fake.called("plot_align_jog")).toEqual([]);
+    press("Go to a drawn line");
+    await settle();
+    await dialogs.updateComplete;
+    expect(app.state.plot.align?.target).not.toBeNull();
+    expect(app.state.machine.position).toEqual(app.state.plot.align?.target);
+    press("Pen down");
+    await settle();
+    press("Nudge right (on screen)");
+    await settle();
+    press("Nudge 0.5 mm");
+    await dialogs.updateComplete;
+    press("Nudge up (on screen)");
+    await settle();
+    await dialogs.updateComplete;
+    expect(fake.called("plot_align_pen")).toEqual([[true]]);
+    expect(fake.called("plot_align_jog")).toEqual([[0.1, 0], [0, -0.5]]);
+    expect(root.querySelector(".offset")?.textContent).toBe("Offset: X +0.10 mm, Y −0.50 mm");
+    press("Continue");
+    await settle();
+    expect(app.state.plot.state).toBe("plotting");
+    expect(fake.layerOffsets.get(1)).toEqual([0.1, -0.5]);
+  });
+
+  it("shows why a nudge was refused inside the pen-change dialog", async () => {
+    const { app, fake } = await readyToPlot();
+    const dialogs = await mount<Lit>("rp-dialogs");
+    await app.startPlot();
+    await app.plotAction("continue");
+    fake.finishLayer();
+    await settle();
+    await app.alignGoto();
+    await app.alignJog(1, 0, 11);
+    await dialogs.updateComplete;
+    expect(shadow(dialogs).querySelector(".lineup .hint")?.textContent).toMatch(/^That's more than 10 mm/);
+    await app.alignJog(1, 0, 0.1);
+    await dialogs.updateComplete;
+    expect(shadow(dialogs).querySelector(".lineup .hint")).toBeNull();
+  });
+
   it("focuses Continue, so Enter continues rather than cancels the plot", async () => {
     const { app } = await readyToPlot();
     const dialogs = await mount<Lit>("rp-dialogs");

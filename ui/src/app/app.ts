@@ -1104,6 +1104,47 @@ export class App {
     }
   }
 
+  // Lining up a new pen at a pen change (bridge.md): go to a drawn line, lower the pen, nudge it on.
+
+  private aligning = false;
+
+  /** One line-up move at a time; a refusal is shown in the pen-change dialog, which covers the strip. */
+  private async align(work: () => Promise<{ plot: PlotStatus; machine: MachineStatus }>): Promise<void> {
+    if (this.aligning) return;
+    this.aligning = true;
+    const seen = this.plotEvents;
+    try {
+      const reply = await work();
+      this.setMachine(reply.machine);
+      // A plot_state event that came while waiting is newer than the reply's picture of the plot.
+      this.store.update(seen === this.plotEvents ? { plot: reply.plot, alignProblem: null } : { alignProblem: null });
+    } catch (error) {
+      this.store.update({ alignProblem: problemOf(error).message });
+      await this.refreshPlot();
+    } finally {
+      this.aligning = false;
+    }
+  }
+
+  /** Send the pen (up) to the start of a line an earlier pen drew; again goes to another line. */
+  alignGoto(): Promise<void> {
+    return this.align(() => this.client.hardware("plot_align_goto"));
+  }
+
+  /** Nudge the pen `step` mm in a screen direction: (1, 0) is right on screen. */
+  alignJog(dx: number, dy: number, step: number): Promise<void> {
+    const [x, y] = this.machineDirection(dx, dy);
+    return this.align(() => this.client.hardware("plot_align_jog", x * step, y * step));
+  }
+
+  alignPen(down: boolean): Promise<void> {
+    return this.align(() => this.client.hardware("plot_align_pen", down));
+  }
+
+  alignReset(): Promise<void> {
+    return this.align(() => this.client.hardware("plot_align_reset"));
+  }
+
   async startPlot(): Promise<void> {
     if (this.blocked("start")) return;
     if (this.state.notice?.source === "plot") this.dismissNotice();

@@ -196,6 +196,11 @@ export class FakeApi implements Api {
   private plotState = "idle";
   private plotMessage = "";
   private prepared: PlotSummary | null = null;
+  /** At a pen change: where the pen was sent to line it up, how far it was nudged, and each pen's shift. */
+  private alignTarget: [number, number] | null = null;
+  private alignOffset: [number, number] = [0, 0];
+  private alignLine = 0;
+  readonly layerOffsets = new Map<number, [number, number]>();
   private layerIndex = 0;
   private preparing = false;
   /** Something changed mid-plot (or mid-prepare): the prepared plot is dropped once the plot is over. */
@@ -270,7 +275,7 @@ export class FakeApi implements Api {
       label: model ? (this.labelStored ?? "Demo") : null,
       nickname: model ? `Demo m${model.number}p1` : null,
       old_firmware: this.connected && this.oldFirmware,
-      position: state === "ready" ? [this.position[0], this.position[1]] : null,
+      position: state === "ready" || this.alignTarget ? [this.position[0], this.position[1]] : null,
       pen_down: this.penDown,
       pen_type: this.penType,
     };
@@ -697,6 +702,7 @@ export class FakeApi implements Api {
     this.layerIndex = 0;
     this.position = [0, 0];
     this.atHome = true;
+    this.layerOffsets.clear();
     if ((this.prepared?.layers.length ?? 0) > 1) this.askForPen();
     else this.runLayer();
     return this.plotReply();
@@ -706,7 +712,62 @@ export class FakeApi implements Api {
     this.log("plot_continue", []);
     const refused = this.expect("load_pen") ?? this.powerProblem();
     if (refused) return refused;
+    if (this.alignOffset[0] !== 0 || this.alignOffset[1] !== 0) this.layerOffsets.set(this.layerIndex, [...this.alignOffset]);
+    this.position = [0, 0];
     this.runLayer();
+    return this.plotReply();
+  }
+
+  /** Where the lines of the pens already plotted start, newest pen first. */
+  private drawnPoints(): [number, number][] {
+    const points: [number, number][] = [];
+    for (let index = this.layerIndex - 1; index >= 0; index--) {
+      const [dx, dy] = this.layerOffsets.get(index) ?? [0, 0];
+      for (const run of this.prepared?.layers[index].path ?? []) {
+        if (run.down && run.points.length > 3) points.push([run.points[0] + dx, run.points[1] + dy]);
+      }
+    }
+    return points;
+  }
+
+  async plot_align_goto() {
+    this.log("plot_align_goto", []);
+    const refused = this.expect("load_pen") ?? this.powerProblem();
+    if (refused) return refused;
+    const points = this.drawnPoints();
+    if (points.length === 0) return fail("Nothing has been drawn yet, so there's no line to put this pen on.");
+    this.alignTarget = points[this.alignLine % points.length];
+    this.alignLine += 1;
+    this.alignOffset = [0, 0];
+    this.position = [...this.alignTarget];
+    return this.plotReply();
+  }
+
+  async plot_align_jog(dx: number, dy: number) {
+    this.log("plot_align_jog", [dx, dy]);
+    const refused = this.expect("load_pen") ?? this.powerProblem();
+    if (refused) return refused;
+    if (!this.alignTarget) return fail("Click Go to a drawn line first, then nudge the pen onto it.");
+    const next: [number, number] = [this.alignOffset[0] + dx, this.alignOffset[1] + dy];
+    if (Math.max(Math.abs(next[0]), Math.abs(next[1])) > 10) {
+      return fail("That's more than 10 mm from the line. Check the paper hasn't moved, or click Go to a drawn line to start again.");
+    }
+    this.alignOffset = next;
+    this.position = [this.alignTarget[0] + next[0], this.alignTarget[1] + next[1]];
+    return this.plotReply();
+  }
+
+  async plot_align_pen(down: boolean) {
+    this.log("plot_align_pen", [down]);
+    return this.expect("load_pen") ?? this.powerProblem() ?? this.plotReply();
+  }
+
+  async plot_align_reset() {
+    this.log("plot_align_reset", []);
+    const refused = this.expect("load_pen");
+    if (refused) return refused;
+    this.alignOffset = [0, 0];
+    if (this.alignTarget) this.position = [...this.alignTarget];
     return this.plotReply();
   }
 
@@ -855,6 +916,11 @@ export class FakeApi implements Api {
       name: layer?.name ?? null,
       message: this.plotMessage,
       details: "",
+      align: {
+        available: this.plotState === "load_pen" && this.layerIndex > 0,
+        target: this.alignTarget ? [...this.alignTarget] : null,
+        offset: [round(this.alignOffset[0], 3), round(this.alignOffset[1], 3)],
+      },
     };
   }
 
@@ -972,6 +1038,9 @@ export class FakeApi implements Api {
   private askForPen(): void {
     const layers = this.prepared?.layers ?? [];
     const name = layers[this.layerIndex].name;
+    this.alignTarget = null;
+    this.alignOffset = [0, 0];
+    this.alignLine = 0;
     this.setPlot("load_pen", `Put the ${name} pen in the holder (${this.layerIndex + 1} of ${layers.length}), then click Continue.`);
   }
 

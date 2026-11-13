@@ -99,6 +99,18 @@ The page shows one button per entry in `plot.actions`. Each action maps to a met
 | `retry` | `plot_retry` |
 | `stop` | `plotter_stop` (only offered while tracing) |
 
+### Lining up a new pen
+A new pen's nib rarely lands exactly where the last one did. While a pen is asked for (`load_pen`) and an earlier pen has drawn something, `plot.align.available` is true and the pen-change dialog offers:
+
+| Method | Arguments | Does |
+|---|---|---|
+| `plot_align_goto()` | | pen up to the start of a line an earlier pen drew (`plot.align.target`); calling it again goes to another line. Clears the offset |
+| `plot_align_jog(dx, dy)` | mm | nudges the pen (a lowered pen is lifted, moved and lowered again). Refused before `plot_align_goto()`, and beyond 10 mm from the line |
+| `plot_align_pen(down)` | true or false | lowers or raises the pen where it is |
+| `plot_align_reset()` | | back to the line's start; the offset is 0 again |
+
+All reply `plot`, `machine` (`machine.position` is the pen's position while lining up). `plot.align.offset` is the sum of the nudges. On `plot_continue()` the pen lifts and returns Home, and this pen's layer is plotted `offset` over; other pens stay where they are. `plot_cancel()` also returns the pen Home first. If the plotter stops during a line-up, the plot is cancelled and Home must be set again.
+
 ### Stopping a plot
 There's no Stop while plotting. The page's Stop is: `plot_pause()`, wait for the `paused` state, then `plot_cancel()`. `plotter_stop()` only stops a trace or a Step 1–4 move.
 
@@ -112,7 +124,7 @@ There's no Stop while plotting. The page's Stop is: `plot_pause()`, wait for the
 - **job**: `id`, `name`, `path`, `page`, `width_mm`, `height_mm`, `issues` [{code, message, count}], `groups` [{color, name, white, lines}] (`lines` are flat lists [x0, y0, x1, y1, …] in artwork mm), `preview` (a `data:image/svg+xml;base64,…` URL for an SVG `<image>`, or null).
 - **piece**: `id`, `job_id`, `placement` {x, y, scale, scale_y, rotation}.
 - **Placement math:** the artwork is scaled on its own axes (`scale` across its width, `scale_y` down its height), turned clockwise by `rotation` degrees, and the top-left of its upright box sits at (x, y) from the paper's corner nearest Home. See `rosetta.geometry.place_point`.
-- **plot**: `state`, `actions`, `layer` (0-based), `layers`, `color`, `name`, `message`, `details`
+- **plot**: `state`, `actions`, `layer` (0-based), `layers`, `color`, `name`, `message`, `details`, `align` {available, target [x, y] or null, offset [dx, dy]}
 - **summary**:
   - `layers` [{layer, color, name, seconds, pendown_mm, path}]
   - `path` is a list of runs [{down, points}], with `points` flattened as [x, y, t, x, y, t, …]. Here t is seconds from the start of that pen's run.

@@ -7,17 +7,18 @@ From plan2-notes.md: never estimate while plotting; a pause asked for before a r
 again; any mid-run error means the pen's position is unknown; a resume uses the settings its plot
 started with; the progress callback never blocks.
 """
+import contextlib
 import logging
 import threading
 from dataclasses import dataclass
 
-from rosetta.app.machine import NO_POWER
+from rosetta.app.machine import NO_POWER, AlignLost
 from rosetta.engine.options import PlotSettings
 from rosetta.engine.preview import Run, plan_layer
 from rosetta.engine.runner import PlotOutcome, PlotResult, PlotRunner, set_resume_origin_home
 from rosetta.errors import UserProblem
 from rosetta.models import get_model
-from rosetta.plotsvg import plot_svg
+from rosetta.plotsvg import plot_svg, shift_layer
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,12 @@ SLIDE_HOME = ("Slide the pen to the corner next to the HOME label and the USB po
               "then click It's in the corner.")
 HOME_UNKNOWN = "Slide the pen Home before the next plot."
 UNEXPECTED = "The plot stopped unexpectedly."
+NO_LINES_YET = "Nothing has been drawn yet, so there's no line to put this pen on."
+GO_TO_LINE_FIRST = "Click Go to a drawn line first, then nudge the pen onto it."
+MAX_NUDGE_MM = 10.0  # a nib sits a millimetre or two off, never centimetres: more is a slip of the hand
+NUDGE_TOO_FAR = (f"That's more than {MAX_NUDGE_MM:g} mm from the line. "
+                 "Check the paper hasn't moved, or click Go to a drawn line to start again.")
+ALIGN_CANCELLED = "The plotter stopped while the pen was being lined up, so the plot was cancelled."
 CHECK_CABLE = "Check the USB cable and the power adapter, then click Continue."
 
 ACTIONS = {
@@ -99,6 +106,11 @@ class PlotController:
         self._pause_wanted = False
         self._preparing = False  # prepare() is composing and planning, outside the lock
         self._stale = False  # something changed mid-plot (or mid-prepare): the prepared plot is out of date
+        self._plot_svg: str | None = None  # this plot's SVG: the prepared one, with lined-up pens moved
+        self._offsets: dict[int, tuple[float, float]] = {}  # how far each lined-up pen's layer was moved
+        self._align_target: tuple[float, float] | None = None  # the drawn point the new pen was sent to
+        self._align_line = 0  # which drawn line "Go to a drawn line" goes to next
+        self._nudge = (0.0, 0.0)  # how far the pen was nudged from that point
 
     # What the page sees.
 
@@ -114,6 +126,11 @@ class PlotController:
             "name": layer.name if layer else None,
             "message": self._message,
             "details": self._details,
+            "align": {
+                "available": self._state == "load_pen" and index > 0,
+                "target": list(self._align_target) if self._align_target else None,
+                "offset": [round(self._nudge[0], 3), round(self._nudge[1], 3)],
+            },
         }
 
     def busy(self) -> bool:
@@ -215,6 +232,8 @@ class PlotController:
             self._index = 0
             self._resume_svg = None
             self._at_home = True
+            self._plot_svg = self._prepared.svg
+            self._offsets = {}
             if len(self._prepared.layers) > 1:
                 self._ask_for_pen()
             else:
@@ -224,8 +243,99 @@ class PlotController:
         """The student has put the asked-for pen in the holder."""
         with self._lock:
             self._expect("load_pen")
+            self._end_align()  # pen up and back Home: the run starts from there
             self._check_power()
+            if self._nudge != (0.0, 0.0):
+                layer = self._prepared.layers[self._index]
+                self._offsets[self._index] = self._nudge
+                self._plot_svg = shift_layer(self._plot_svg, layer.number, *self._nudge)
+                logger.info("The %s pen is plotted %.2f, %.2f mm over, to line up with the last pen",
+                            layer.name, *self._nudge)
             self._run_layer(resume=False)
+
+    # At a pen change: lining the new pen up with the lines already drawn. A new pen's nib rarely sits
+    # exactly where the last one did. The student sends the pen to the start of a drawn line, lowers
+    # it, nudges it until the nib is on the line, and this pen's layer is then plotted that far over.
+
+    def align_goto(self) -> None:
+        """Send the pen (up) to the start of a line an earlier pen drew; again goes to the next line."""
+        with self._lock:
+            points = self._drawn_points()
+            target = points[self._align_line % len(points)]
+            self._align_line += 1
+            with self._align_guard():
+                self._machine.align_goto(*target)
+            self._align_target, self._nudge = target, (0.0, 0.0)
+            self._set("load_pen", self._message)
+
+    def align_jog(self, dx: float, dy: float) -> None:
+        """Nudge the pen; the nudges since Go to a drawn line add up to this pen's offset."""
+        with self._lock:
+            self._expect("load_pen")
+            if self._align_target is None:
+                raise UserProblem(GO_TO_LINE_FIRST)
+            nudge = (self._nudge[0] + dx, self._nudge[1] + dy)
+            if max(abs(nudge[0]), abs(nudge[1])) > MAX_NUDGE_MM:
+                raise UserProblem(NUDGE_TOO_FAR)
+            with self._align_guard():
+                x, y = self._machine.align_jog(dx, dy)
+            # Where the pen really went (the reach's edge can stop it short), not what was asked for.
+            self._nudge = (x - self._align_target[0], y - self._align_target[1])
+            self._set("load_pen", self._message)
+
+    def align_pen(self, down: bool) -> None:
+        with self._lock:
+            self._expect("load_pen")
+            with self._align_guard():
+                self._machine.align_pen(down)
+
+    def align_reset(self) -> None:
+        """Forget the nudges: the pen goes back to the drawn line's start."""
+        with self._lock:
+            self._expect("load_pen")
+            if self._align_target is None:
+                return
+            with self._align_guard():
+                self._machine.align_goto(*self._align_target)
+            self._nudge = (0.0, 0.0)
+            self._set("load_pen", self._message)
+
+    def _drawn_points(self) -> list[tuple[float, float]]:
+        """Where the lines of the pens already plotted start, newest pen first, as they were drawn."""
+        self._expect("load_pen")
+        points = []
+        for index in range(self._index - 1, -1, -1):
+            dx, dy = self._offsets.get(index, (0.0, 0.0))
+            for run in self._prepared.layers[index].runs:
+                if run.down and len(run.points) > 1:
+                    points.append((run.points[0][0] + dx, run.points[0][1] + dy))
+        if not points:
+            raise UserProblem(NO_LINES_YET)
+        return points
+
+    @contextlib.contextmanager
+    def _align_guard(self):
+        """If the plotter stops mid line-up, the pen is lost: the plot ends and Home is set again."""
+        try:
+            yield
+        except AlignLost:
+            self._align_lost()
+            raise
+
+    def _end_align(self) -> None:
+        try:
+            self._machine.align_end()
+        except AlignLost:
+            self._align_lost()
+            raise
+
+    def _align_lost(self) -> None:
+        self._at_home = False
+        self._clear_align()
+        self._end_plot(ALIGN_CANCELLED)
+
+    def _clear_align(self) -> None:
+        self._align_target, self._align_line, self._nudge = None, 0, (0.0, 0.0)
 
     def pause(self) -> None:
         """Pause at the next step, pen up. A late click after the run has ended does nothing."""
@@ -257,6 +367,8 @@ class PlotController:
         """Stop the plot for good. If the pen isn't known to be Home, the motors go off for re-homing."""
         with self._lock:
             self._expect("load_pen", "paused", "paused_at_home", "reconnect", "slide_home", "not_connected")
+            if self._state == "load_pen":
+                self._end_align()
             self._end_plot("Plot cancelled.")
 
     def reconnect(self) -> None:
@@ -357,6 +469,7 @@ class PlotController:
     def _ask_for_pen(self) -> None:
         layer = self._prepared.layers[self._index]
         count = len(self._prepared.layers)
+        self._clear_align()
         self._set(
             "load_pen",
             f"Put the {layer.name} pen in the holder ({self._index + 1} of {count}), then click Continue.",
@@ -364,7 +477,7 @@ class PlotController:
 
     def _run_layer(self, resume: bool) -> None:
         layer = self._prepared.layers[self._index]
-        svg = self._resume_svg if resume else self._prepared.svg
+        svg = self._resume_svg if resume else (self._plot_svg or self._prepared.svg)
         settings, runner = self._settings, self._runner
         self._retry_resume = resume
         self._begin_run()

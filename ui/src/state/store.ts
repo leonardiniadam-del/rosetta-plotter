@@ -78,6 +78,8 @@ export interface AppState {
   notice: Notice | null;
   dialog: Dialog | null;
   plot: PlotStatus;
+  /** Why the last line-up move at a pen change was refused (shown in the pen-change dialog), or null. */
+  alignProblem: string | null;
   /** The prepared plot: per-pen times and the planned path (null until plot_prepare replies). */
   summary: PlotSummary | null;
   preparing: boolean;
@@ -129,6 +131,7 @@ export function initialState(): AppState {
     notice: null,
     dialog: null,
     plot: { ...IDLE_PLOT },
+    alignProblem: null,
     summary: null,
     preparing: false,
     prepareProblem: null,

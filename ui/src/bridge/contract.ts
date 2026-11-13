@@ -101,6 +101,17 @@ export interface PlotStatus {
   name: string | null;
   message: string;
   details: string;
+  /** At a pen change: lining the new pen up with lines already drawn (bridge.md "Lining up a new pen"). */
+  align?: PlotAlign;
+}
+
+export interface PlotAlign {
+  /** True while a pen is asked for and an earlier pen has drawn something to line up with. */
+  available: boolean;
+  /** The drawn point the pen was sent to, in machine mm; null until Go to a drawn line. */
+  target: [number, number] | null;
+  /** How far the pen has been nudged from it, in machine mm: this pen plots that far over. */
+  offset: [number, number];
 }
 
 /** Advanced options by name (bridge.md set_advanced): null means automatic for pen_up and speed_pendown. */
@@ -231,6 +242,10 @@ export interface Api {
   plot_trace(): MachineReply;
   plot_start(): PlotReply;
   plot_continue(): PlotReply;
+  plot_align_goto(): PlotReply;
+  plot_align_jog(dx: number, dy: number): PlotReply;
+  plot_align_pen(down: boolean): PlotReply;
+  plot_align_reset(): PlotReply;
   plot_pause(): PlotReply;
   plot_resume(): PlotReply;
   plot_home(): PlotReply;

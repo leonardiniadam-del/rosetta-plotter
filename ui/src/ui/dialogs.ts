@@ -2,14 +2,18 @@
 import { css, html, nothing } from "lit";
 import { live } from "lit/directives/live.js";
 import { SHORTCUT_HELP } from "../app/shortcut-help";
-import type { AdvancedValues } from "../bridge/contract";
+import type { AdvancedValues, PlotAlign } from "../bridge/contract";
 import { formatLength, UNITS, UNIT_NAMES, type Units } from "../geometry/units";
 import { AUTOMATIC, CHOICE_LABELS, MANUAL_START, changedAdvanced, checkAdvanced } from "../state/advanced";
 import type { Dialog } from "../state/store";
 import { AppElement } from "./base";
 import "./field";
+import { icon, type IconName } from "./icons";
 import { controls } from "./styles";
 
+const GO_FIRST = "Click Go to a drawn line first.";
+/** Nudge steps for lining a pen up, in mm: a nib is only ever a little off. */
+const ALIGN_STEPS = [0.1, 0.5, 1];
 const MODEL_FIRST = "Choose the model on the plotter's label first.";
 
 export class RpDialogs extends AppElement {
@@ -20,6 +24,7 @@ export class RpDialogs extends AppElement {
     draft: { state: true },
     problem: { state: true },
     saving: { state: true },
+    alignStep: { state: true },
   };
 
   static styles = [
@@ -116,6 +121,32 @@ export class RpDialogs extends AppElement {
       .grow {
         flex: 1;
       }
+      .lineup {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 10px 0 0;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+      }
+      .lineup p {
+        margin: 0;
+        max-width: 420px;
+      }
+      .nudge {
+        display: grid;
+        grid-template-columns: repeat(3, 28px);
+        gap: 3px;
+      }
+      .nudge button {
+        width: 28px;
+        padding: 0;
+        justify-content: center;
+      }
+      .offset {
+        font-variant-numeric: tabular-nums;
+      }
       .pen {
         display: flex;
         gap: 12px;
@@ -137,6 +168,8 @@ export class RpDialogs extends AppElement {
   declare draft: AdvancedValues;
   declare problem: string;
   declare saving: boolean;
+  /** How far each press of a line-up arrow nudges the pen, in mm. */
+  declare alignStep: number;
   private lastDialog: unknown = null;
   /** The Settings dialog whose draft is showing; a pen change in between doesn't make it a new one. */
   private lastSettings: unknown = null;
@@ -149,6 +182,7 @@ export class RpDialogs extends AppElement {
     this.draft = {};
     this.problem = "";
     this.saving = false;
+    this.alignStep = 0.1;
   }
 
   connectedCallback(): void {
@@ -237,10 +271,55 @@ export class RpDialogs extends AppElement {
     const color = plot.color === "#000000" ? "var(--ink-black)" : (plot.color ?? "transparent");
     return html`<h2 id="title">Change the pen</h2>
       <div class="pen"><i style=${`background: ${color}`}></i><p class="message">${plot.message}</p></div>
+      ${plot.align?.available ? this.lineUp(plot.align) : nothing}
       <div class="buttons">
         <button @click=${() => void this.app.plotAction("cancel")}>Cancel plot</button>
         <button class="primary" @click=${() => void this.app.plotAction("continue")}>Continue</button>
       </div>`;
+  }
+
+  /** Line the new pen up with a line the last pen drew: this pen then plots that far over. */
+  private lineUp(align: PlotAlign) {
+    const at = align.target !== null;
+    const units = this.s.units;
+    const [ox, oy] = align.offset;
+    const signed = (mm: number) => `${mm > 0 ? "+" : mm < 0 ? "−" : ""}${Math.abs(mm).toFixed(2)} mm`;
+    const arrow = (label: string, name: IconName, dx: number, dy: number) =>
+      html`<button class="icon" aria-label=${label} title=${at ? label : GO_FIRST} aria-disabled=${at ? "false" : "true"}
+        @click=${() => at && void this.app.alignJog(dx, dy, this.alignStep)}>${icon(name)}</button>`;
+    return html`<fieldset class="lineup">
+      <legend>Line this pen up (optional)</legend>
+      <p class="keys">A new pen's nib rarely lands exactly where the last one did. Send the pen to a line already drawn,
+        lower it, and nudge it until the nib sits on the start of that line. This pen is then plotted that far over.</p>
+      <div class="inline">
+        <button @click=${() => void this.app.alignGoto()}>${at ? "Try another line" : "Go to a drawn line"}</button>
+        <button aria-disabled=${at ? "false" : "true"} title=${at ? "Lower the pen to see where the nib lands" : GO_FIRST}
+          @click=${() => at && void this.app.alignPen(true)}>${icon("penDown")}Pen down</button>
+        <button aria-disabled=${at ? "false" : "true"} title=${at ? "Raise the pen" : GO_FIRST}
+          @click=${() => at && void this.app.alignPen(false)}>${icon("penUp")}Pen up</button>
+      </div>
+      <div class="inline">
+        <div class="nudge" role="group" aria-label="Nudge the pen">
+          <span></span>${arrow("Nudge up (on screen)", "arrowUp", 0, -1)}<span></span>
+          ${arrow("Nudge left (on screen)", "arrowLeft", -1, 0)}<span></span>${arrow("Nudge right (on screen)", "arrowRight", 1, 0)}
+          <span></span>${arrow("Nudge down (on screen)", "arrowDown", 0, 1)}<span></span>
+        </div>
+        <div class="models">
+          <div class="inline" role="group" aria-label="Nudge step, in mm">
+            ${ALIGN_STEPS.map(
+              (step) => html`<button aria-pressed=${String(this.alignStep === step)} aria-label=${`Nudge ${step} mm`}
+                @click=${() => (this.alignStep = step)}>${step} mm</button>`,
+            )}
+          </div>
+          <div class="inline">
+            <span class="offset" title=${`In ${UNIT_NAMES[units]}: ${formatLength(ox, units, true)}, ${formatLength(oy, units, true)}`}
+              >Offset: X ${signed(ox)}, Y ${signed(oy)}</span>
+            <button aria-disabled=${ox !== 0 || oy !== 0 ? "false" : "true"} @click=${() => void this.app.alignReset()}>Reset</button>
+          </div>
+        </div>
+      </div>
+      ${this.s.alignProblem ? html`<p class="hint" role="alert">${this.s.alignProblem}</p>` : nothing}
+    </fieldset>`;
   }
 
   private close() {

@@ -433,6 +433,26 @@ class Api:
         return self._plot_reply()
 
     @_bridge
+    def plot_align_goto(self):
+        self._plot.align_goto()
+        return self._plot_reply()
+
+    @_bridge
+    def plot_align_jog(self, dx, dy):
+        self._plot.align_jog(_finite(dx), _finite(dy))
+        return self._plot_reply()
+
+    @_bridge
+    def plot_align_pen(self, down):
+        self._plot.align_pen(bool(down))
+        return self._plot_reply()
+
+    @_bridge
+    def plot_align_reset(self):
+        self._plot.align_reset()
+        return self._plot_reply()
+
+    @_bridge
     def plot_pause(self):
         self._plot.pause()
         return self._plot_reply()
