@@ -77,7 +77,7 @@ version_info = VSVersionInfo(
             StringStruct("FileDescription", "Rosetta Plotter"),
             StringStruct("FileVersion", VERSION),
             StringStruct("InternalName", "RosettaPlotter"),
-            StringStruct("LegalCopyright", "AGPL-3.0-or-later"),
+            StringStruct("LegalCopyright", "Copyright (C) 2026 Adam M. Leonardini. AGPL-3.0-or-later."),
             StringStruct("OriginalFilename", "RosettaPlotter.exe"),
             StringStruct("ProductName", "Rosetta Plotter"),
             StringStruct("ProductVersion", VERSION),

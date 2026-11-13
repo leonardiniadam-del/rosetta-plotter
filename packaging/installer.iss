@@ -3,7 +3,7 @@
 ;   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /DAppVersion=0.1.0 packaging\installer.iss
 ;
 ; (scripts\build_installer.ps1 runs it after PyInstaller.) It packs the PyInstaller one-folder build
-; (build\pyinstaller\dist\Rosetta Plotter), LICENSE, the Quick Start page and Microsoft's offline WebView2
+; (build\pyinstaller\dist\Rosetta Plotter), LICENSE, THIRD-PARTY-NOTICES.txt, the Quick Start page and Microsoft's offline WebView2
 ; Runtime installer (packaging\vendor, not in git), which runs only when the laptop doesn't have WebView2.
 ; The installer is unsigned: students click "More info", then "Run anyway" (QuickStart.html).
 
@@ -24,7 +24,7 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher=Rosetta Plotter
-AppCopyright=AGPL-3.0-or-later
+AppCopyright=Copyright (C) 2026 Adam M. Leonardini. AGPL-3.0-or-later.
 VersionInfoVersion={#AppVersion}
 VersionInfoProductName={#AppName}
 VersionInfoDescription={#AppName} Setup
@@ -56,6 +56,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "{#AppBuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+; Copyright notices and licenses for the bundled third-party software (written by scripts\make_notices.py).
+Source: "THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "QuickStart.html"; DestDir: "{app}"; Flags: ignoreversion
 ; The optional "Rosetta Plotter" printer (print from any program into the app). It needs administrator
 ; rights, so it is not added during this per-user install: the Start menu shortcut below adds it.
