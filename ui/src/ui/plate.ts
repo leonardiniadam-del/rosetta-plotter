@@ -10,9 +10,10 @@ import { angleAt, GRID, gridLines, handleAt, hitPiece, JOB_MIME, linesToPath, ma
 import { cameraMatrix, fitCamera, panBy, toMachine, toScreen, zoomAt, type Camera, type Size } from "../geometry/camera";
 import { neighbours, orientMatrix, type Corner, type OrientationCode } from "../geometry/orientation";
 import { pointAt, routeOf, routePath, timeAtPendown } from "../geometry/route";
+import { SNAP_PX, snapDrag } from "../geometry/snap";
 import { pieceMatrix, rotateAboutCenter, scaleFromHandle, type Box, type Handle, type Point } from "../geometry/placement";
 import { disabledReason } from "../state/reasons";
-import { jobOf, pieceBoxOnPaper, plotRunning, reachOf } from "../state/selectors";
+import { jobOf, pieceBoxOnPaper, plotRunning, reachOf, selectionBox } from "../state/selectors";
 import { StoreController, type Tool } from "../state/store";
 import { AppElement } from "./base";
 import { controls } from "./styles";
@@ -26,7 +27,7 @@ const ONE_DRAWING = "Select one drawing to resize or turn it.";
 
 type Drag =
   | { kind: "pan"; last: Point }
-  | { kind: "move"; start: Point; originals: Map<string, PlacementData> }
+  | { kind: "move"; start: Point; originals: Map<string, PlacementData>; box: Box | null }
   | { kind: "scale"; id: string; handle: Handle; original: PlacementData; offset: Point }
   | { kind: "rotate"; id: string; center: Point; startAngle: number; original: PlacementData }
   | { kind: "marquee"; start: Point; end: Point; additive: boolean };
@@ -414,7 +415,7 @@ export class RpPlate extends AppElement {
       if (!s.selection.includes(hit)) this.app.select([hit]);
       if (locked) return;
       const selected = this.s.pieces.filter((p) => this.s.selection.includes(p.id));
-      this.drag = { kind: "move", start: paper, originals: new Map(selected.map((p) => [p.id, p.placement])) };
+      this.drag = { kind: "move", start: paper, originals: new Map(selected.map((p) => [p.id, p.placement])), box: selectionBox(this.s) };
       this.capture(event);
       return;
     }
@@ -446,6 +447,17 @@ export class RpPlate extends AppElement {
       if (event.shiftKey) {
         if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
         else dx = 0;
+      }
+      // Snap to the paper's edges, margins and center (Alt drags freely).
+      if (drag.box && this.s.view.snap && !event.altKey) {
+        const { width, height } = this.s.material;
+        const paperGuides = { width, height, margin: this.s.view.margins ? this.s.margin : 0 };
+        const [sx, sy] = snapDrag(drag.box, dx, dy, paperGuides, SNAP_PX / this.camera.scale);
+        // Shift keeps the drag on one axis: the axis it holds still doesn't snap away.
+        const holdX = event.shiftKey && dx === 0;
+        const holdY = event.shiftKey && dy === 0;
+        if (!holdX) dx = sx;
+        if (!holdY) dy = sy;
       }
       for (const [id, original] of drag.originals) this.app.previewPlacement(id, { ...original, x: original.x + dx, y: original.y + dy });
       return;

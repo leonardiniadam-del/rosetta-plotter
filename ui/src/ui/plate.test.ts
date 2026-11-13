@@ -63,6 +63,31 @@ describe("rp-plate", () => {
     expect(y).toBeCloseTo(26.35);
   });
 
+  it("snaps a dragged drawing to the paper's edge, and Alt drags freely", async () => {
+    const { app, fake, svg } = await plateWithJob();
+    await drag(svg, [50, 50], [45, 50]); // 1.35 mm from the paper's left edge
+    let [, x, y] = fake.called("piece_place").at(-1) as [string, number, number];
+    expect(x).toBeCloseTo(0);
+    expect(y).toBeCloseTo(6.35);
+    await drag(svg, [50, 50], [52, 50], { altKey: true });
+    [, x] = fake.called("piece_place").at(-1) as [string, number, number];
+    expect(x).toBeCloseTo(2);
+    app.toggleView("snap");
+    await drag(svg, [50, 50], [49, 50]);
+    [, x] = fake.called("piece_place").at(-1) as [string, number, number];
+    expect(x).toBeCloseTo(1);
+  });
+
+  it("Snap to paper edge moves the selection flush against it", async () => {
+    const { app, fake } = await plateWithJob();
+    app.select(["piece-1"]);
+    await app.snapSelection("right");
+    await app.snapSelection("bottom");
+    const [, x, y] = fake.called("piece_place").at(-1) as [string, number, number];
+    expect(x).toBeCloseTo(app.state.material.width - 120);
+    expect(y).toBeCloseTo(app.state.material.height - 80);
+  });
+
   it("stretches with a corner handle, or keeps proportions with Shift", async () => {
     const { fake, svg } = await plateWithJob();
     await drag(svg, [126.35, 86.35], [246.35, 86.35]);

@@ -47,6 +47,8 @@ export interface ViewOptions {
   grid: boolean;
   margins: boolean;
   original: boolean;
+  /** Dragged drawings snap to the paper's edges, margins and center. */
+  snap: boolean;
 }
 
 export interface AppState {
@@ -123,7 +125,7 @@ export function initialState(): AppState {
     orientation: "nw-h",
     orienting: null,
     linkScale: true,
-    view: { grid: true, margins: true, original: false },
+    view: { grid: true, margins: true, original: false, snap: true },
     notice: null,
     dialog: null,
     plot: { ...IDLE_PLOT },

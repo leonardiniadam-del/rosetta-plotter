@@ -7,6 +7,7 @@ import { BridgeError, type Client } from "../bridge/client";
 import type { AdvancedValues, MachineStatus, PlacementData, PlotProgress, PlotStatus } from "../bridge/contract";
 import { MAX_SCALE, pieceBox, resizeBox, rotateAboutCenter, type Point } from "../geometry/placement";
 import { routeOf } from "../geometry/route";
+import { toEdge, type PaperEdge } from "../geometry/snap";
 import { formatLength, type Units } from "../geometry/units";
 import { AT_REST } from "../state/plotting";
 import { disabledReason, type Control } from "../state/reasons";
@@ -832,6 +833,18 @@ export class App {
       if (!job) continue;
       await this.setPlacement(piece.id, rotateAboutCenter(job.width_mm, job.height_mm, piece.placement, piece.placement.rotation + delta));
     }
+  }
+
+  /** Snap to paper edge: the selection moves flush against that edge of the paper. */
+  async snapSelection(edge: PaperEdge): Promise<void> {
+    const box = selectionBox(this.state);
+    if (!box) {
+      this.blocked("arrange");
+      return;
+    }
+    const { width, height } = this.state.material;
+    const [dx, dy] = toEdge(box, edge, { width, height, margin: 0 });
+    await this.moveSelectionBy(dx, dy);
   }
 
   async centerSelection(): Promise<void> {
