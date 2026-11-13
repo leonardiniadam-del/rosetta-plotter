@@ -20,6 +20,7 @@ from rosetta.app import smoke
 from rosetta.app.api import ARTWORK_TYPES, Api
 from rosetta.app.events import WindowSink
 from rosetta.app.logs import setup_logging, stop_logging
+from rosetta.app.printinbox import PrintInbox, print_file
 from rosetta.app.settings import SettingsStore, app_folder
 from rosetta.engine.options import ensure_std_streams
 
@@ -152,9 +153,13 @@ def main(argv: list[str] | None = None) -> int:
     sink = WindowSink()
     api = Api(store, sink, log_path=log_path)
     open_window(api, sink, ui_entry())
+    # Prints sent to the "Rosetta Plotter" printer (packaging/printer) arrive like dropped files.
+    inbox = PrintInbox(print_file(), app_folder() / "prints", api._files_dropped)
+    inbox.start()
     try:
         start_gui()
     finally:
+        inbox.stop()
         sink.close()
         logger.info("Rosetta Plotter closed")
         stop_logging()

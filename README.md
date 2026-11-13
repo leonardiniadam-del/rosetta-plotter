@@ -25,6 +25,15 @@ The window's page is a Vite + TypeScript + Lit app in `ui/`:
 Then run the real window with `.venv\Scripts\python -m rosetta.app.main`. To work on the page live inside the real
 window, keep `npm run dev` running and start the window with `$env:ROSETTA_UI_URL="http://localhost:5173"`.
 
+## Printing into the app
+
+`packaging\printer\Install Rosetta Printer.bat` adds a Windows printer named "Rosetta Plotter" (it asks for
+administrator rights once). It is Windows' own "Microsoft Print To PDF" driver on a local port whose name is
+`%ProgramData%\Rosetta Plotter\Print\print.pdf`, so printing to it from Illustrator, Rhino or anything else
+writes that file without asking. While the app is open, `rosetta.app.printinbox` sees each new print, copies it
+to `%APPDATA%\RosettaPlotter\prints` and imports the copy into the Jobs list. `Remove Rosetta Printer.bat`
+takes the printer away again. The student installer puts both in `{app}\Printer` with a Start menu shortcut.
+
 ## Running the app
 
 Run the app (it shows the student window once `ui\dist` is built, and a bridge console for trying every method until then):

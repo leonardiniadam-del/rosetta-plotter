@@ -62,10 +62,14 @@
 <h2>4. Import your drawing</h2>
 <ol>
   <li>Click <b>Import</b> in the Jobs list (or <b>File &rsaquo; Import&hellip;</b>, <kbd>Ctrl</kbd>+<kbd>I</kbd>),
-      or drag a file onto the window. SVG, PDF and Illustrator (.ai) files work.</li>
+      or drag a file onto the window. SVG, PDF and Illustrator (.ai) files work, including the .ai files Rhino exports.</li>
   <li>For a file with several pages, pick the page you want.</li>
   <li>A &#9888; next to a job means something needs a look. Hover over it to read why.</li>
 </ol>
+<div class="note">You can also <b>print</b> into Rosetta Plotter. Once, from the Start menu, run
+  <b>Install the Rosetta Plotter printer</b> (it asks for administrator permission). After that, with Rosetta Plotter
+  open, choose <b>Print</b> in any program and pick the <b>Rosetta Plotter</b> printer: the page shows up in the Jobs
+  list a few seconds later. Print lines as vectors, at 100%.</div>
 
 <h2>5. Place it on the paper</h2>
 <ol>
@@ -73,6 +77,8 @@
   <li>Double-click the job to place it in the paper's corner nearest Home, or drag it onto the paper.</li>
   <li>Drag it to move it. Drag a corner handle to scale (hold <kbd>Shift</kbd> to keep its proportions).
       Drawings come in at 100%, so scale drawings stay to scale.</li>
+  <li>As you drag, the drawing snaps to the paper's edges, margins and center. Hold <kbd>Alt</kbd> to drag freely.
+      <b>Object &rsaquo; Snap to paper edge</b> puts it flush against an edge.</li>
   <li>Anything shown in <b>red</b> is off the paper and won't be drawn.</li>
   <li>Tape your paper down on the plotter so it lines up with the paper on screen.</li>
 </ol>
@@ -81,14 +87,21 @@
 <ol>
   <li>Optional: <b>Trace outline</b> moves the pen (raised) around your drawing so you can check where it lands.</li>
   <li>Put a pen in the holder and click <b>Start</b> (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>).</li>
-  <li><b>Pause</b> stops the pen safely so you can carry on later. <b>Stop</b> ends the plot for good.</li>
+  <li><b>Pause</b> stops the pen safely. <b>Resume</b> carries on. <b>Return Home</b> sends the pen to the HOME
+      corner. <b>Stop</b> ends the plot for good.</li>
 </ol>
+<div class="note">In the <b>Plotter</b> panel, the arrows move the pen by the step you pick (0.1 to 100 mm), the
+  button in the middle sends it Home, <b>Pen up</b> and <b>Pen down</b> raise and lower it, and
+  <b>Release motors</b> lets you slide the pen by hand (use <b>Set Home</b> afterwards).</div>
 
 <h2>7. Pen changes</h2>
 <ol>
   <li>If your drawing has more than one color, the pen goes back Home and the app asks for the next pen,
       for example &ldquo;Put the <b>red</b> pen in the holder (2 of 3), then click Continue.&rdquo;</li>
   <li>Swap the pen, then click <b>Continue</b>.</li>
+  <li>Optional, when the new pen must land exactly on the last pen's lines: click <b>Go to a drawn line</b>, then
+      <b>Pen down</b>, and nudge with the arrows (0.1, 0.5 or 1 mm) until the nib sits on the start of that line.
+      Then click <b>Continue</b>: this pen is plotted that far over.</li>
 </ol>
 
 <h2>If something goes wrong</h2>

@@ -57,12 +57,16 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#AppBuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "QuickStart.html"; DestDir: "{app}"; Flags: ignoreversion
+; The optional "Rosetta Plotter" printer (print from any program into the app). It needs administrator
+; rights, so it is not added during this per-user install: the Start menu shortcut below adds it.
+Source: "printer\*"; DestDir: "{app}\Printer"; Flags: ignoreversion
 ; Extracted to {tmp} and run by the [Code] below only when WebView2 is missing.
 Source: "vendor\{#WebView2Installer}"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{group}\{#AppName} Quick Start"; Filename: "{app}\QuickStart.html"
+Name: "{group}\Install the {#AppName} printer"; Filename: "{app}\Printer\Install Rosetta Printer.bat"; Comment: "Print from any program straight into Rosetta Plotter"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
