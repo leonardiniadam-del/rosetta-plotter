@@ -41,7 +41,7 @@ While a plot is under way (`machine.state` is `plotting`), every call here that 
 | `plotter_set_home()` | | `machine` (`ready`, position [0, 0]) |
 | `plotter_jog(dx, dy)` | mm | `machine` |
 | `plotter_goto(x, y)` | mm from Home | `machine` |
-| `plotter_pen(down)` | true or false | `machine` (needs `ready`) |
+| `plotter_pen(down)` | true or false | `machine`. Works before Home is set too (`not_homed` or `ready`) |
 | `plotter_stop()` | | stops a trace or a Step 1–4 move in progress. It does not stop a plot: see Stopping a plot |
 | `plotter_test_mark()` | | `machine` (a 10 mm line by the paper corner nearest Home, then Home) |
 | `pen_set(pen_down, pen_type)` | a whole number 0–`pen_down_max`, a `pen_types` key | `machine`. Remembered for this plotter; a down pen moves at once. During a plot it's remembered for the next one but doesn't change the running plot |

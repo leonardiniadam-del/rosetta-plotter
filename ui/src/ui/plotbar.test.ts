@@ -36,7 +36,7 @@ describe("plot bar", () => {
     expect(app.state.notice?.message).toBe("The plot is being prepared.");
   });
 
-  it("while paused offers Resume, Return Home and Cancel plot", async () => {
+  it("while paused Resume, Return Home and Cancel plot work", async () => {
     const { app } = await readyToPlot();
     await app.setPenVisible("#ff0000", false);
     await settle();
@@ -46,7 +46,20 @@ describe("plot bar", () => {
     await settle();
     const bar = await mount<Lit>("rp-plotbar");
     const labels = Array.from(shadow(bar).querySelectorAll("button")).map((b) => b.textContent?.trim());
-    expect(labels).toEqual(["Resume", "Return Home", "Cancel plot"]);
+    expect(labels).toEqual(["Set Home", "Start", "Pause", "Resume", "Return Home", "Cancel plot"]);
+    const root = shadow(bar);
+    expect(button(root, "Resume").getAttribute("aria-disabled")).toBe("false");
+    expect(button(root, "Return Home").getAttribute("aria-disabled")).toBe("false");
+    expect(button(root, "Start").getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("Return Home sends the pen Home when nothing is plotting", async () => {
+    const { fake } = await readyToPlot();
+    const root = shadow(await mount<Lit>("rp-plotbar"));
+    expect(button(root, "Resume").getAttribute("aria-disabled")).toBe("true");
+    button(root, "Return Home").click();
+    await settle();
+    expect(fake.called("plotter_goto")).toEqual([[0, 0]]);
   });
 
   it("Cancel plot asks first, then cancels", async () => {
@@ -166,7 +179,7 @@ describe("Set Home on the plot bar", () => {
   it("sits just left of Start", async () => {
     await readyToPlot();
     const labels = Array.from(shadow(await mount<Lit>("rp-plotbar")).querySelectorAll("button")).map((b) => b.textContent?.trim());
-    expect(labels).toEqual(["Set Home", "Start", "Pause", "Stop"]);
+    expect(labels).toEqual(["Set Home", "Start", "Pause", "Resume", "Return Home", "Stop"]);
   });
 
   it("runs the two-click Set Home", async () => {

@@ -212,8 +212,9 @@ class Machine:
         return self.status()
 
     def pen(self, down: bool) -> dict:
-        """Raise or lower the pen where it is (the Pen step's buttons, which come after Home)."""
-        with self._using(MachineState.READY) as plotter:
+        """Raise or lower the pen where it is. It needs no Home: the pen lift works wherever the
+        carriage is, so a nib can be checked against the paper before Home is set too."""
+        with self._using(*_KNOWN) as plotter:
             self._check_power(plotter)
             if down:
                 plotter.pen_down()

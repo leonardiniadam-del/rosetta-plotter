@@ -75,6 +75,9 @@ const PICK_X = "Click the corner the pen moves toward along X (along the rail)."
 /** Holding a jog arrow (orientation spec §3): how long before it keeps going, and each move while held. */
 export const HOLD_DELAY_MS = 300;
 export const HOLD_MOVE_MM = 3;
+/** The jog pad's step sizes in mm: fine ones to line a new pen up with lines already drawn, long ones to cross the paper. */
+export const JOG_STEPS = [0.1, 0.5, 1, 10, 50, 100] as const;
+const MOTORS_RELEASED = "Motors released: the pen slides by hand. Use Set Home before moving or plotting.";
 
 export class App {
   /** The pointer's machine position; kept apart so moving the mouse only re-renders the status bar. */
@@ -366,7 +369,8 @@ export class App {
       let last = this.state.machine.position;
       while (this.holding === hold && disabledReason("move", this.state) === null) {
         const [x, y] = this.machineDirection(dx, dy);
-        const moved = await this.plotterAction(() => this.client.hardware("plotter_jog", x * HOLD_MOVE_MM, y * HOLD_MOVE_MM));
+        const each = this.state.jogStep < 1 ? this.state.jogStep : HOLD_MOVE_MM; // a fine step stays fine while held
+        const moved = await this.plotterAction(() => this.client.hardware("plotter_jog", x * each, y * each));
         const now = this.state.machine.position;
         if (!moved || !now || (last && now[0] === last[0] && now[1] === last[1])) break;
         last = now;
@@ -389,8 +393,29 @@ export class App {
     return this.movePenTo([0, 0]);
   }
 
+  /** Return Home: a paused plot sends the pen Home and can resume from there; otherwise a plain move Home. */
+  async returnHome(): Promise<void> {
+    if (this.blocked("returnHome")) return;
+    if (this.state.plot.state === "paused") await this.plotAction("home");
+    else await this.movePenHome();
+  }
+
+  resumePlot(): void {
+    if (this.blocked("resume")) return;
+    void this.plotAction("resume");
+  }
+
+  /** Let go of the motors so the pen slides by hand. Where it is then isn't known until Set Home. */
+  async releaseMotors(): Promise<void> {
+    if (this.blocked("setHome")) return;
+    this.jogRelease();
+    if (await this.plotterAction(() => this.client.hardware("plotter_motors_off"))) {
+      this.notify({ kind: "info", message: MOTORS_RELEASED });
+    }
+  }
+
   async pen(down: boolean): Promise<void> {
-    if (this.blocked("move")) return;
+    if (this.blocked("pen")) return;
     await this.plotterAction(() => this.client.hardware("plotter_pen", down));
   }
 
@@ -411,7 +436,7 @@ export class App {
     }
   }
 
-  setJogStep(step: 1 | 10): void {
+  setJogStep(step: number): void {
     this.store.update({ jogStep: step });
   }
 

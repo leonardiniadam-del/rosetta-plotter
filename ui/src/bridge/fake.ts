@@ -415,7 +415,7 @@ export class FakeApi implements Api {
 
   async plotter_pen(down: boolean) {
     this.log("plotter_pen", [down]);
-    return this.problem(true) ?? ok({ machine: this.status() });
+    return this.problem(false) ?? ok({ machine: this.status() });
   }
 
   async plotter_stop() {

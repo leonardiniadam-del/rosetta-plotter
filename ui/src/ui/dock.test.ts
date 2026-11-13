@@ -87,11 +87,59 @@ describe("Plotter panel", () => {
     await settle();
     labelled(root, "Move pen right").click();
     await settle();
-    labelled(root, "Step 1 mm").click();
+    labelled(root, "Step 10 mm").click();
     await settle();
     labelled(root, "Move pen down (on screen)").click();
     await settle();
-    expect(fake.called("plotter_jog")).toEqual([[1, 0], [0, 10]]);
+    labelled(root, "Step 0.1 mm").click();
+    await settle();
+    labelled(root, "Move pen left (on screen)").click();
+    await settle();
+    expect(fake.called("plotter_jog")).toEqual([[1, 0], [0, 10], [-0.1, 0]]);
+  });
+
+  it("offers sub-millimetre to 100 mm steps", async () => {
+    await startApp();
+    const root = shadow(await mount("rp-plotter"));
+    const steps = Array.from(root.querySelectorAll(".steps button")).map((b) => b.textContent?.trim());
+    expect(steps).toEqual(["0.1", "0.5", "1", "10", "50", "100"]);
+  });
+
+  it("sends the pen Home from the middle of the jog pad", async () => {
+    const { app, fake } = await startApp();
+    const root = shadow(await mount("rp-plotter"));
+    await app.setHome();
+    await app.setHome();
+    await settle();
+    labelled(root, "Send the pen Home").click();
+    await settle();
+    expect(fake.called("plotter_goto")).toEqual([[0, 0]]);
+  });
+
+  it("raises and lowers the pen before Home is set", async () => {
+    const { fake } = await startApp();
+    const root = shadow(await mount("rp-plotter"));
+    const press = (text: string) => (Array.from(root.querySelectorAll("button")).find((b) => b.textContent?.trim() === text) as HTMLButtonElement).click();
+    press("Pen down");
+    await settle();
+    press("Pen up");
+    await settle();
+    expect(fake.called("plotter_pen")).toEqual([[true], [false]]);
+  });
+
+  it("Release motors lets go without starting Set Home", async () => {
+    const { app, fake } = await startApp();
+    const root = shadow(await mount("rp-plotter"));
+    await app.setHome();
+    await app.setHome();
+    await settle();
+    fake.calls.length = 0;
+    (Array.from(root.querySelectorAll("button")).find((b) => b.textContent?.trim() === "Release motors") as HTMLButtonElement).click();
+    await settle();
+    expect(fake.called("plotter_motors_off")).toHaveLength(1);
+    expect(app.state.machine.state).toBe("not_homed");
+    expect(app.state.homing).toBe(false);
+    expect(app.state.notice?.message).toMatch(/^Motors released/);
   });
 
   it("sets the pen height live", async () => {

@@ -18,6 +18,8 @@ import fileVector from "@tabler/icons/outline/file-vector.svg?raw";
 import hand from "@tabler/icons/outline/hand-stop.svg?raw";
 import home from "@tabler/icons/outline/home.svg?raw";
 import info from "@tabler/icons/outline/info-circle.svg?raw";
+import returnHome from "@tabler/icons/outline/arrow-back-up.svg?raw";
+import release from "@tabler/icons/outline/lock-open.svg?raw";
 import link from "@tabler/icons/outline/link.svg?raw";
 import mark from "@tabler/icons/outline/pencil.svg?raw";
 import orient from "@tabler/icons/outline/axis-x.svg?raw";
@@ -43,7 +45,7 @@ import zoom from "@tabler/icons/outline/zoom-in.svg?raw";
 const ICONS = {
   alert, arrowDown, arrowLeft, arrowRight, arrowUp, center, check, chevronDown, crosshair, duplicate, eye, eyeOff,
   file, filePdf, fileVector, hand, home, info, link, mark, orient, pause, penDown, penUp, play, plug, plugOff, plus, pointer,
-  rotate, rotatePaper, route, settings, stop, trace, trash, unlink, x, zoom,
+  release, returnHome, rotate, rotatePaper, route, settings, stop, trace, trash, unlink, x, zoom,
 };
 
 export type IconName = keyof typeof ICONS;

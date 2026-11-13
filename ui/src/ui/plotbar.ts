@@ -73,13 +73,7 @@ export class RpPlotbar extends AppElement {
   private buttons(): PlotButton[] {
     const { app, s } = this;
     const state = s.plot.state;
-    if (state === "paused" || state === "paused_at_home") {
-      return [
-        { label: "Resume", iconName: "play", primary: true, reason: null, run: () => void app.plotAction("resume") },
-        ...(state === "paused" ? [{ label: "Return Home", iconName: "home" as IconName, reason: null, run: () => void app.plotAction("home") }] : []),
-        { label: "Cancel plot", reason: null, run: () => app.cancelPlot() },
-      ];
-    }
+    const paused = state === "paused" || state === "paused_at_home";
     const waiting = WAITING[state] ?? null;
     return [
       {
@@ -90,9 +84,19 @@ export class RpPlotbar extends AppElement {
         reason: waiting ?? disabledReason("setHome", s),
         run: () => void app.setHome(),
       },
-      { label: "Start", iconName: "play", primary: true, reason: waiting ?? disabledReason("start", s), run: () => void app.startPlot() },
+      { label: "Start", iconName: "play", primary: !paused, reason: waiting ?? disabledReason("start", s), run: () => void app.startPlot() },
       { label: "Pause", iconName: "pause", reason: waiting ?? disabledReason("pause", s), run: () => app.pause() },
-      { label: "Stop", iconName: "stop", reason: waiting ?? disabledReason("stop", s), run: () => app.stopPlot() },
+      { label: "Resume", iconName: "play", primary: paused, reason: waiting ?? disabledReason("resume", s), run: () => app.resumePlot() },
+      {
+        label: "Return Home",
+        iconName: "returnHome",
+        tip: paused ? "Send the pen Home to check or swap it; Resume carries on from there" : "Send the pen to the Home corner (pen up)",
+        reason: waiting ?? disabledReason("returnHome", s),
+        run: () => void app.returnHome(),
+      },
+      paused
+        ? { label: "Cancel plot", iconName: "stop", reason: null, run: () => app.cancelPlot() }
+        : { label: "Stop", iconName: "stop", reason: waiting ?? disabledReason("stop", s), run: () => app.stopPlot() },
     ];
   }
 

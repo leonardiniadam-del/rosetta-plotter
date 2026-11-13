@@ -64,7 +64,8 @@ export interface AppState {
   tool: Tool;
   /** Set Home's first click switched the motors off; the next click confirms. */
   homing: boolean;
-  jogStep: 1 | 10;
+  /** How far one press of a jog arrow moves the pen, in mm: one of JOG_STEPS. */
+  jogStep: number;
   /** How the plate is turned to match the plotter (orientation spec §1). */
   orientation: OrientationCode;
   /** Set plotter orientation is waiting for its picks: HOME's corner, then the X corner. */

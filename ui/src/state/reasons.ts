@@ -10,6 +10,9 @@ export type Control =
   | "paper"
   | "setHome"
   | "move"
+  | "pen"
+  | "resume"
+  | "returnHome"
   | "trace"
   | "arrange"
   | "markCorner"
@@ -28,6 +31,8 @@ const NO_SELECTION = "Select a drawing first.";
 const PREPARING = "The plot is being prepared.";
 const NOT_READY = "The plot isn't ready yet.";
 const NOT_PLOTTING = "Not plotting.";
+const NOT_PAUSED = "Nothing is paused.";
+const ALREADY_HOME = "The pen is already Home.";
 const NOT_PLOTTING_OR_TRACING = "Not plotting or tracing.";
 
 export function disabledReason(control: Control, s: AppState): string | null {
@@ -65,6 +70,24 @@ export function disabledReason(control: Control, s: AppState): string | null {
       [plotRunning(s), RUNNING],
       [machine === "not_homed", NO_HOME],
     ],
+    // Raising and lowering the pen needs no Home: only a plotter that isn't in the middle of a plot.
+    pen: [
+      [machine === "no_plotter", NO_PLOTTER],
+      [machine === "needs_model", NO_MODEL],
+      [plotRunning(s), RUNNING],
+    ],
+    resume: [[!["paused", "paused_at_home"].includes(s.plot.state), NOT_PAUSED]],
+    // Paused: the plot sends the pen Home and can resume from there. Otherwise it's a plain move Home.
+    returnHome:
+      s.plot.state === "paused"
+        ? []
+        : [
+            [s.plot.state === "paused_at_home", ALREADY_HOME],
+            [machine === "no_plotter", NO_PLOTTER],
+            [machine === "needs_model", NO_MODEL],
+            [plotRunning(s), RUNNING],
+            [machine === "not_homed", NO_HOME],
+          ],
     trace: [
       [machine === "no_plotter", NO_PLOTTER],
       [plotRunning(s), RUNNING],

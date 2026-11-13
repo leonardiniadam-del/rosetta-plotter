@@ -188,11 +188,20 @@ def test_pen_up_and_down(tmp_path):
     assert ebb.pen_cmds[-1][0] == "up"
 
 
-def test_the_pen_moves_only_once_homed(tmp_path):
+def test_the_pen_lifts_and_lowers_before_home_is_set(tmp_path):
+    machine, ebb, _bench, _store = _plugged(tmp_path, nickname="m1p1")
+    machine.scan()
+    assert machine.pen(True)["state"] == "not_homed"
+    assert ebb.pen_cmds[-1][0] == "down"
+    machine.pen(False)
+    assert ebb.pen_cmds[-1][0] == "up"
+
+
+def test_moves_wait_for_home(tmp_path):
     machine, _ebb, _bench, _store = _plugged(tmp_path, nickname="m1p1")
     machine.scan()
     with pytest.raises(UserProblem, match=NOT_HOMED):
-        machine.pen(True)
+        machine.jog(1, 0)
 
 
 def test_trace_and_test_mark_end_at_home(tmp_path):

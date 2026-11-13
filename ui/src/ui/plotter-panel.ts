@@ -1,6 +1,7 @@
 /** The Plotter panel (spec §2.5): the model, the pen, its live height, a test mark, and the jog pad. */
 import { css, html } from "lit";
 import { live } from "lit/directives/live.js";
+import { JOG_STEPS } from "../app/app";
 import { disabledReason } from "../state/reasons";
 import { AppElement } from "./base";
 import { icon, type IconName } from "./icons";
@@ -47,8 +48,21 @@ export class RpPlotterPanel extends AppElement {
         padding: 0;
         justify-content: center;
       }
-      .pad .step {
+      .steps {
+        display: flex;
+        gap: 3px;
+        justify-content: center;
+      }
+      .steps button {
+        flex: 1;
+        min-width: 0;
+        padding: 0 2px;
+        justify-content: center;
         font-size: var(--font-size-small);
+      }
+      .wide {
+        flex: 1;
+        justify-content: center;
       }
     `,
   ];
@@ -61,6 +75,18 @@ export class RpPlotterPanel extends AppElement {
       @click=${() => (reason ? this.app.explain(reason) : run())}
     >
       ${icon(iconName)}
+    </button>`;
+  }
+
+  /** A button with its name written on it. */
+  private labelled(label: string, iconName: IconName, reason: string | null, tip: string, run: () => void) {
+    return html`<button
+      class="wide"
+      title=${reason ?? tip}
+      aria-disabled=${reason ? "true" : "false"}
+      @click=${() => (reason ? this.app.explain(reason) : run())}
+    >
+      ${icon(iconName)}${label}
     </button>`;
   }
 
@@ -121,6 +147,8 @@ export class RpPlotterPanel extends AppElement {
     const s = this.s;
     const m = s.machine;
     const move = disabledReason("move", s);
+    const pen = disabledReason("pen", s);
+    const release = disabledReason("setHome", s);
     const model = disabledReason("model", s);
     const name =
       m.state === "no_plotter" ? "No plotter" : m.state === "needs_model" ? "Model unknown" : [m.label, m.model_name].filter(Boolean).join(" · ");
@@ -151,8 +179,11 @@ export class RpPlotterPanel extends AppElement {
         /><span class="value">${m.pen_down}</span></label
       >
       <div class="line">
-        ${this.button("Raise pen", "penUp", move, () => void this.app.pen(false))}
-        ${this.button("Lower pen", "penDown", move, () => void this.app.pen(true))}
+        ${this.labelled("Pen up", "penUp", pen, "Raise the pen where it is", () => void this.app.pen(false))}
+        ${this.labelled("Pen down", "penDown", pen, "Lower the pen where it is, to see where the nib lands", () => void this.app.pen(true))}
+      </div>
+      <div class="line">
+        ${this.labelled("Release motors", "release", release, "Let go of the motors so the pen slides by hand. Use Set Home afterwards", () => void this.app.releaseMotors())}
         <button
           aria-disabled=${move ? "true" : "false"}
           title=${move ?? "Draw a 10 mm line by the paper's corner nearest HOME, then go Home"}
@@ -162,11 +193,19 @@ export class RpPlotterPanel extends AppElement {
       <div class="pad" role="group" aria-label="Move the pen (pen up)">
         <span></span>${this.arrow("Move pen up (on screen)", "arrowUp", move, 0, -1)}<span></span>
         ${this.arrow("Move pen left (on screen)", "arrowLeft", move, -1, 0)}
-        <button class="step" aria-label=${`Step ${s.jogStep} mm (click to change)`} @click=${() => this.app.setJogStep(s.jogStep === 1 ? 10 : 1)}>
-          ${s.jogStep} mm
-        </button>
+        ${this.button("Send the pen Home", "home", move, () => void this.app.movePenHome())}
         ${this.arrow("Move pen right (on screen)", "arrowRight", move, 1, 0)}
         <span></span>${this.arrow("Move pen down (on screen)", "arrowDown", move, 0, 1)}<span></span>
+      </div>
+      <div class="steps" role="group" aria-label="Step for each press, in mm">
+        ${JOG_STEPS.map(
+          (step) => html`<button
+            aria-pressed=${String(s.jogStep === step)}
+            aria-label=${`Step ${step} mm`}
+            title=${`Each press of an arrow moves the pen ${step} mm`}
+            @click=${() => this.app.setJogStep(step)}
+          >${step}</button>`,
+        )}
       </div>`;
   }
 }
