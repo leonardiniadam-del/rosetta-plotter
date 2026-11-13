@@ -3,7 +3,8 @@
 #   2. the one-folder app (PyInstaller, packaging\rosetta.spec)
 #   3. a smoke check of the frozen app (--smoke-check: a stand-in plotter, no serial port is ever opened,
 #      so it is safe with an AxiDraw plugged in)
-#   4. the installer (Inno Setup, packaging\installer.iss) -> dist-installer\RosettaPlotterSetup-<version>.exe
+#   4. packaging\THIRD-PARTY-NOTICES.txt (scripts\make_notices.py, from what PyInstaller bundled)
+#   5. the installer (Inno Setup, packaging\installer.iss) -> dist-installer\RosettaPlotterSetup-<version>.exe
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 [-Iscc <path to ISCC.exe>] [-SkipUi]
 #
@@ -68,6 +69,10 @@ Get-Content $Result | Write-Host
 if ($process.ExitCode -ne 0 -or -not $smoke.ready -or -not $smoke.shell -or @($smoke.missing).Count -gt 0) {
     Fail "The frozen app failed its smoke check."
 }
+
+Step "Writing third-party notices"
+& $Python (Join-Path $Root "scripts\make_notices.py")
+if ($LASTEXITCODE -ne 0) { Fail "make_notices.py failed: a bundled package may be missing its license text." }
 
 Step "Building the installer (Inno Setup)"
 & $Iscc "/DAppVersion=$Version" (Join-Path $Root "packaging\installer.iss")
