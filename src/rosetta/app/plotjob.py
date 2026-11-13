@@ -40,11 +40,9 @@ SLIDE_HOME = ("Slide the pen to the corner next to the HOME label and the USB po
               "then click It's in the corner.")
 HOME_UNKNOWN = "Slide the pen Home before the next plot."
 UNEXPECTED = "The plot stopped unexpectedly."
-NO_LINES_YET = "Nothing has been drawn yet, so there's no line to put this pen on."
-GO_TO_LINE_FIRST = "Click Go to a drawn line first, then nudge the pen onto it."
 MAX_NUDGE_MM = 10.0  # a nib sits a millimetre or two off, never centimetres: more is a slip of the hand
-NUDGE_TOO_FAR = (f"That's more than {MAX_NUDGE_MM:g} mm from the line. "
-                 "Check the paper hasn't moved, or click Go to a drawn line to start again.")
+NUDGE_TOO_FAR = (f"The arrows nudge this pen at most {MAX_NUDGE_MM:g} mm, and that pen is then plotted that "
+                 "far over. To travel further, click a spot with the Move pen tool, then nudge from there.")
 ALIGN_CANCELLED = "The plotter stopped while the pen was being lined up, so the plot was cancelled."
 CHECK_CABLE = "Check the USB cable and the power adapter, then click Continue."
 
@@ -108,9 +106,8 @@ class PlotController:
         self._stale = False  # something changed mid-plot (or mid-prepare): the prepared plot is out of date
         self._plot_svg: str | None = None  # this plot's SVG: the prepared one, with lined-up pens moved
         self._offsets: dict[int, tuple[float, float]] = {}  # how far each lined-up pen's layer was moved
-        self._align_target: tuple[float, float] | None = None  # the drawn point the new pen was sent to
-        self._align_line = 0  # which drawn line "Go to a drawn line" goes to next
-        self._nudge = (0.0, 0.0)  # how far the pen was nudged from that point
+        self._align_target: tuple[float, float] | None = None  # where the pen was sent to (None: still Home)
+        self._nudge = (0.0, 0.0)  # how far the arrows have nudged the pen from there
 
     # What the page sees.
 
@@ -127,7 +124,7 @@ class PlotController:
             "message": self._message,
             "details": self._details,
             "align": {
-                "available": self._state == "load_pen" and index > 0,
+                "available": self._state == "load_pen",
                 "target": list(self._align_target) if self._align_target else None,
                 "offset": [round(self._nudge[0], 3), round(self._nudge[1], 3)],
             },
@@ -254,33 +251,33 @@ class PlotController:
             self._run_layer(resume=False)
 
     # At a pen change: lining the new pen up with the lines already drawn. A new pen's nib rarely sits
-    # exactly where the last one did. The student sends the pen to the start of a drawn line, lowers
-    # it, nudges it until the nib is on the line, and this pen's layer is then plotted that far over.
+    # exactly where the last one did. While a pen is asked for, the Plotter panel still works: the
+    # student sends the pen to a drawn line (the Move pen tool), lowers it, and nudges it with the arrows
+    # until the nib is on the line. This pen's layer is then plotted as far over as it was nudged.
 
-    def align_goto(self) -> None:
-        """Send the pen (up) to the start of a line an earlier pen drew; again goes to the next line."""
+    def align_move(self, x: float, y: float) -> None:
+        """Travel, pen up, to (x, y) mm from Home. Not a nudge: the nudges start again from there."""
         with self._lock:
-            points = self._drawn_points()
-            target = points[self._align_line % len(points)]
-            self._align_line += 1
+            self._expect("load_pen")
             with self._align_guard():
-                self._machine.align_goto(*target)
-            self._align_target, self._nudge = target, (0.0, 0.0)
+                self._align_target = self._machine.align_goto(x, y)
+            self._nudge = (0.0, 0.0)
             self._set("load_pen", self._message)
 
     def align_jog(self, dx: float, dy: float) -> None:
-        """Nudge the pen; the nudges since Go to a drawn line add up to this pen's offset."""
+        """Nudge the pen (the panel's arrows). The nudges since the last travel add up to this pen's
+        offset. Before any travel they count from Home."""
         with self._lock:
             self._expect("load_pen")
-            if self._align_target is None:
-                raise UserProblem(GO_TO_LINE_FIRST)
+            target = self._align_target or (0.0, 0.0)
             nudge = (self._nudge[0] + dx, self._nudge[1] + dy)
             if max(abs(nudge[0]), abs(nudge[1])) > MAX_NUDGE_MM:
                 raise UserProblem(NUDGE_TOO_FAR)
             with self._align_guard():
                 x, y = self._machine.align_jog(dx, dy)
             # Where the pen really went (the reach's edge can stop it short), not what was asked for.
-            self._nudge = (x - self._align_target[0], y - self._align_target[1])
+            self._align_target = target
+            self._nudge = (x - target[0], y - target[1])
             self._set("load_pen", self._message)
 
     def align_pen(self, down: bool) -> None:
@@ -288,30 +285,6 @@ class PlotController:
             self._expect("load_pen")
             with self._align_guard():
                 self._machine.align_pen(down)
-
-    def align_reset(self) -> None:
-        """Forget the nudges: the pen goes back to the drawn line's start."""
-        with self._lock:
-            self._expect("load_pen")
-            if self._align_target is None:
-                return
-            with self._align_guard():
-                self._machine.align_goto(*self._align_target)
-            self._nudge = (0.0, 0.0)
-            self._set("load_pen", self._message)
-
-    def _drawn_points(self) -> list[tuple[float, float]]:
-        """Where the lines of the pens already plotted start, newest pen first, as they were drawn."""
-        self._expect("load_pen")
-        points = []
-        for index in range(self._index - 1, -1, -1):
-            dx, dy = self._offsets.get(index, (0.0, 0.0))
-            for run in self._prepared.layers[index].runs:
-                if run.down and len(run.points) > 1:
-                    points.append((run.points[0][0] + dx, run.points[0][1] + dy))
-        if not points:
-            raise UserProblem(NO_LINES_YET)
-        return points
 
     @contextlib.contextmanager
     def _align_guard(self):
@@ -335,7 +308,7 @@ class PlotController:
         self._end_plot(ALIGN_CANCELLED)
 
     def _clear_align(self) -> None:
-        self._align_target, self._align_line, self._nudge = None, 0, (0.0, 0.0)
+        self._align_target, self._nudge = None, (0.0, 0.0)
 
     def pause(self) -> None:
         """Pause at the next step, pen up. A late click after the run has ended does nothing."""

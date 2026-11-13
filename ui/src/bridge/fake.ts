@@ -199,7 +199,6 @@ export class FakeApi implements Api {
   /** At a pen change: where the pen was sent to line it up, how far it was nudged, and each pen's shift. */
   private alignTarget: [number, number] | null = null;
   private alignOffset: [number, number] = [0, 0];
-  private alignLine = 0;
   readonly layerOffsets = new Map<number, [number, number]>();
   private layerIndex = 0;
   private preparing = false;
@@ -275,7 +274,7 @@ export class FakeApi implements Api {
       label: model ? (this.labelStored ?? "Demo") : null,
       nickname: model ? `Demo m${model.number}p1` : null,
       old_firmware: this.connected && this.oldFirmware,
-      position: state === "ready" || this.alignTarget ? [this.position[0], this.position[1]] : null,
+      position: state === "ready" || this.plotState === "load_pen" ? [this.position[0], this.position[1]] : null,
       pen_down: this.penDown,
       pen_type: this.penType,
     };
@@ -718,28 +717,13 @@ export class FakeApi implements Api {
     return this.plotReply();
   }
 
-  /** Where the lines of the pens already plotted start, newest pen first. */
-  private drawnPoints(): [number, number][] {
-    const points: [number, number][] = [];
-    for (let index = this.layerIndex - 1; index >= 0; index--) {
-      const [dx, dy] = this.layerOffsets.get(index) ?? [0, 0];
-      for (const run of this.prepared?.layers[index].path ?? []) {
-        if (run.down && run.points.length > 3) points.push([run.points[0] + dx, run.points[1] + dy]);
-      }
-    }
-    return points;
-  }
-
-  async plot_align_goto() {
-    this.log("plot_align_goto", []);
+  async plot_align_move(x: number, y: number) {
+    this.log("plot_align_move", [x, y]);
     const refused = this.expect("load_pen") ?? this.powerProblem();
     if (refused) return refused;
-    const points = this.drawnPoints();
-    if (points.length === 0) return fail("Nothing has been drawn yet, so there's no line to put this pen on.");
-    this.alignTarget = points[this.alignLine % points.length];
-    this.alignLine += 1;
+    this.moveTo(x, y);
+    this.alignTarget = [this.position[0], this.position[1]];
     this.alignOffset = [0, 0];
-    this.position = [...this.alignTarget];
     return this.plotReply();
   }
 
@@ -747,28 +731,22 @@ export class FakeApi implements Api {
     this.log("plot_align_jog", [dx, dy]);
     const refused = this.expect("load_pen") ?? this.powerProblem();
     if (refused) return refused;
-    if (!this.alignTarget) return fail("Click Go to a drawn line first, then nudge the pen onto it.");
+    const target = this.alignTarget ?? [0, 0];
     const next: [number, number] = [this.alignOffset[0] + dx, this.alignOffset[1] + dy];
     if (Math.max(Math.abs(next[0]), Math.abs(next[1])) > 10) {
-      return fail("That's more than 10 mm from the line. Check the paper hasn't moved, or click Go to a drawn line to start again.");
+      return fail(
+        "The arrows nudge this pen at most 10 mm, and that pen is then plotted that far over. To travel further, click a spot with the Move pen tool, then nudge from there.",
+      );
     }
-    this.alignOffset = next;
-    this.position = [this.alignTarget[0] + next[0], this.alignTarget[1] + next[1]];
+    this.moveTo(target[0] + next[0], target[1] + next[1]);
+    this.alignTarget = [target[0], target[1]];
+    this.alignOffset = [round(this.position[0] - target[0], 3), round(this.position[1] - target[1], 3)];
     return this.plotReply();
   }
 
   async plot_align_pen(down: boolean) {
     this.log("plot_align_pen", [down]);
     return this.expect("load_pen") ?? this.powerProblem() ?? this.plotReply();
-  }
-
-  async plot_align_reset() {
-    this.log("plot_align_reset", []);
-    const refused = this.expect("load_pen");
-    if (refused) return refused;
-    this.alignOffset = [0, 0];
-    if (this.alignTarget) this.position = [...this.alignTarget];
-    return this.plotReply();
   }
 
   async plot_pause() {
@@ -917,7 +895,7 @@ export class FakeApi implements Api {
       message: this.plotMessage,
       details: "",
       align: {
-        available: this.plotState === "load_pen" && this.layerIndex > 0,
+        available: this.plotState === "load_pen",
         target: this.alignTarget ? [...this.alignTarget] : null,
         offset: [round(this.alignOffset[0], 3), round(this.alignOffset[1], 3)],
       },
@@ -1040,7 +1018,6 @@ export class FakeApi implements Api {
     const name = layers[this.layerIndex].name;
     this.alignTarget = null;
     this.alignOffset = [0, 0];
-    this.alignLine = 0;
     this.setPlot("load_pen", `Put the ${name} pen in the holder (${this.layerIndex + 1} of ${layers.length}), then click Continue.`);
   }
 

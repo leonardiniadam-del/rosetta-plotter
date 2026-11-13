@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import "./dock";
-import { mount, settle, shadow, startApp } from "../test/setup";
+import { mount, settle, shadow, readyToPlot, startApp } from "../test/setup";
 
 function labelled(root: ShadowRoot, label: string): HTMLElement {
   const found = root.querySelector(`[aria-label^="${label}"]`);
@@ -125,6 +125,29 @@ describe("Plotter panel", () => {
     press("Pen up");
     await settle();
     expect(fake.called("plotter_pen")).toEqual([[true], [false]]);
+  });
+
+  it("works at a pen change, and shows how far over the pen will plot", async () => {
+    const { app, fake } = await readyToPlot();
+    await app.startPlot();
+    const panel = await mount("rp-plotter");
+    const root = shadow(panel);
+    expect(labelled(root, "Move pen right").getAttribute("aria-disabled")).toBe("false");
+    labelled(root, "Step 0.5 mm").click();
+    await settle();
+    labelled(root, "Move pen down (on screen)").click();
+    await settle();
+    await settle();
+    expect(fake.called("plot_align_jog")).toEqual([[0, 0.5]]);
+    expect(root.querySelector(".offset")?.textContent?.replace(/\s+/g, " ").trim()).toBe("This pen plots X 0.00, Y +0.50 mm over");
+    const press = (text: string) => (Array.from(root.querySelectorAll("button")).find((b) => b.textContent?.trim() === text) as HTMLButtonElement).click();
+    press("Pen down");
+    await settle();
+    expect(fake.called("plot_align_pen")).toEqual([[true]]);
+    const before = fake.called("plotter_motors_off").length;
+    press("Release motors"); // not in the middle of a plot
+    await settle();
+    expect(fake.called("plotter_motors_off")).toHaveLength(before);
   });
 
   it("Release motors lets go without starting Set Home", async () => {

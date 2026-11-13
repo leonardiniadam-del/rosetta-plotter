@@ -1,5 +1,5 @@
 /** Why a control can't work right now (manager UI spec §6), or null if it can. Shown as its tooltip. */
-import { plotRunning } from "./selectors";
+import { penChange, plotRunning } from "./selectors";
 import type { AppState } from "./store";
 
 export type Control =
@@ -35,8 +35,12 @@ const NOT_PAUSED = "Nothing is paused.";
 const ALREADY_HOME = "The pen is already Home.";
 const NOT_PLOTTING_OR_TRACING = "Not plotting or tracing.";
 
+/** The pen moves these work on at a pen change too, though a plot is under way. */
+const AT_PEN_CHANGE: Control[] = ["move", "pen", "returnHome"];
+
 export function disabledReason(control: Control, s: AppState): string | null {
   const machine = s.machine.state;
+  if (penChange(s) && AT_PEN_CHANGE.includes(control)) return s.machine.power_ok ? null : NO_POWER;
   const checks: Record<Control, [boolean, string][]> = {
     start: [
       [machine === "no_plotter", NO_PLOTTER],

@@ -1,7 +1,7 @@
 """At a pen change, the new pen is lined up with lines already drawn, and its layer plots that far over."""
 import pytest
 
-from rosetta.app.plotjob import GO_TO_LINE_FIRST, NO_LINES_YET, NUDGE_TOO_FAR
+from rosetta.app.plotjob import NOT_NOW, NUDGE_TOO_FAR
 from rosetta.compose import ColorGroup
 from rosetta.engine.options import PlotSettings
 from rosetta.engine.preview import plan_layer
@@ -50,43 +50,50 @@ def _at_second_pen(tmp_path) -> Rig:
     return rig
 
 
-def test_the_first_pen_has_no_line_to_go_to(tmp_path):
-    rig = Rig(tmp_path, TWO_COLORS)
-    rig.controller.prepare()
-    rig.controller.start()
-    assert rig.controller.status()["align"]["available"] is False
-    with pytest.raises(UserProblem, match=NO_LINES_YET):
-        rig.controller.align_goto()
-
-
-def test_the_pen_goes_to_a_drawn_line_and_nudges_add_up(tmp_path):
+def test_the_arrows_nudge_from_home_and_the_nudges_add_up(tmp_path):
     rig = _at_second_pen(tmp_path)
     assert rig.controller.status()["align"] == {"available": True, "target": None, "offset": [0.0, 0.0]}
-    with pytest.raises(UserProblem, match=GO_TO_LINE_FIRST):
-        rig.controller.align_jog(0.1, 0)
+    rig.controller.align_jog(0.5, 0)
+    rig.controller.align_jog(0, 0.1)
+    assert rig.controller.status()["align"]["offset"] == pytest.approx([0.5, 0.1], abs=0.02)
+    assert rig.machine.status()["position"] == pytest.approx([0.5, 0.1], abs=0.05)
 
-    rig.controller.align_goto()
-    target = rig.controller.status()["align"]["target"]
-    drawn = [layer for layer in rig.controller.summary()["layers"] if layer["name"] == "black"][0]
-    first_line = next(run for run in drawn["path"] if run["down"])
-    assert target == pytest.approx(first_line["points"][:2], abs=0.01)
-    assert rig.machine.status()["position"] == pytest.approx(target, abs=0.05)
+
+def test_travel_is_not_a_nudge_and_nudges_count_from_there(tmp_path):
+    rig = _at_second_pen(tmp_path)
+    rig.controller.align_jog(0.5, 0)
+    rig.controller.align_move(30, 30)  # the Move pen tool: to a line the black pen drew
+    status = rig.controller.status()["align"]
+    assert status["target"] == pytest.approx([30, 30], abs=0.05) and status["offset"] == [0.0, 0.0]
 
     rig.controller.align_pen(True)
     rig.controller.align_jog(0.3, 0)
     rig.controller.align_jog(0, -0.2)
     assert rig.controller.status()["align"]["offset"] == pytest.approx([0.3, -0.2], abs=0.02)
-    assert rig.machine.status()["position"] == pytest.approx([target[0] + 0.3, target[1] - 0.2], abs=0.05)
+    assert rig.machine.status()["position"] == pytest.approx([30.3, 29.8], abs=0.05)
 
-    rig.controller.align_reset()
+    rig.controller.align_move(0, 0)  # the pad's Home button starts over
     assert rig.controller.status()["align"]["offset"] == [0.0, 0.0]
-    with pytest.raises(UserProblem, match=NUDGE_TOO_FAR[:20]):
-        rig.controller.align_jog(11, 0)
+
+
+def test_the_arrows_nudge_at_most_ten_mm(tmp_path):
+    rig = _at_second_pen(tmp_path)
+    rig.controller.align_move(30, 30)
+    with pytest.raises(UserProblem, match=NUDGE_TOO_FAR[:30]):
+        rig.controller.align_jog(50, 0)
+    assert rig.machine.status()["position"] == pytest.approx([30, 30], abs=0.05)  # nothing moved
+
+
+def test_lining_up_only_works_while_a_pen_is_asked_for(tmp_path):
+    rig = Rig(tmp_path, TWO_COLORS)
+    rig.controller.prepare()
+    with pytest.raises(UserProblem, match=NOT_NOW):
+        rig.controller.align_jog(0.1, 0)
 
 
 def test_continue_plots_the_new_pen_over_by_the_nudge(tmp_path):
     rig = _at_second_pen(tmp_path)
-    rig.controller.align_goto()
+    rig.controller.align_move(30, 30)
     rig.controller.align_pen(True)
     rig.controller.align_jog(0.5, 0.25)
     dx, dy = rig.controller.status()["align"]["offset"]
@@ -98,9 +105,10 @@ def test_continue_plots_the_new_pen_over_by_the_nudge(tmp_path):
     assert rig.machine.status()["position"] == [0.0, 0.0]
 
 
-def test_a_pen_that_was_not_nudged_plots_where_it_was(tmp_path):
+def test_a_pen_that_was_only_moved_plots_where_it_was(tmp_path):
     rig = _at_second_pen(tmp_path)
-    rig.controller.align_goto()
+    rig.controller.align_move(30, 30)
+    rig.controller.align_pen(True)
     rig.controller.continue_pen()
     rig.wait_until("done")
     assert "transform=" not in rig.controller._plot_svg
@@ -108,18 +116,18 @@ def test_a_pen_that_was_not_nudged_plots_where_it_was(tmp_path):
 
 def test_the_next_plot_starts_without_the_last_ones_nudge(tmp_path):
     rig = _at_second_pen(tmp_path)
-    rig.controller.align_goto()
     rig.controller.align_jog(0.5, 0)
     rig.controller.continue_pen()
     rig.wait_until("done")
     rig.controller.start()
     assert "transform=" not in rig.controller._plot_svg
+    assert rig.controller.status()["align"]["offset"] == [0.0, 0.0]
     rig.controller.cancel()
 
 
 def test_cancel_while_lining_up_brings_the_pen_home(tmp_path):
     rig = _at_second_pen(tmp_path)
-    rig.controller.align_goto()
+    rig.controller.align_move(30, 30)
     rig.controller.align_pen(True)
     rig.controller.cancel()
     assert rig.state() == "ready"

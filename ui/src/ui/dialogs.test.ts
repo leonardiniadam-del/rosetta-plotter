@@ -68,107 +68,24 @@ describe("shortcuts while a dialog is open", () => {
     expect(app.state.dialog?.kind).toBe("about");
   });
 
-  it("Delete does nothing while the plot asks for a pen", async () => {
+  it("Delete doesn't remove a drawing while the plot asks for a pen", async () => {
     const { app, fake } = await readyToPlot();
     await app.startPlot();
     expect(app.state.plot.state).toBe("load_pen");
-    const used = handleShortcut(app, new KeyboardEvent("keydown", { key: "Delete" }));
+    handleShortcut(app, new KeyboardEvent("keydown", { key: "Delete" }));
     await settle();
-    expect(used).toBe(false);
     expect(fake.called("piece_delete")).toEqual([]);
   });
 });
 
 describe("plot dialogs", () => {
-  it("asks for the next pen, and Continue plots it", async () => {
+  it("a pen change opens no dialog", async () => {
     const { app } = await readyToPlot();
     const dialogs = await mount<Lit>("rp-dialogs");
     await app.startPlot();
-    await dialogs.updateComplete;
-    const root = shadow(dialogs);
-    expect(root.querySelector("h2")?.textContent).toBe("Change the pen");
-    expect(root.querySelector(".message")?.textContent).toBe("Put the black pen in the holder (1 of 2), then click Continue.");
-    (root.querySelector("button.primary") as HTMLButtonElement).click();
-    await settle();
-    expect(app.state.plot.state).toBe("plotting");
-  });
-
-  it("lines a new pen up with a drawn line, and plots it that far over", async () => {
-    const { app, fake } = await readyToPlot();
-    const dialogs = await mount<Lit>("rp-dialogs");
-    await app.startPlot();
-    await dialogs.updateComplete;
-    const root = shadow(dialogs);
-    expect(root.querySelector(".lineup")).toBeNull(); // the first pen has nothing to line up with
-    await app.plotAction("continue");
-    fake.finishLayer();
-    await settle();
     await dialogs.updateComplete;
     expect(app.state.plot.state).toBe("load_pen");
-    const press = (text: string) =>
-      (Array.from(root.querySelectorAll("button")).find((b) => b.textContent?.trim() === text || b.getAttribute("aria-label") === text) as HTMLButtonElement).click();
-    press("Nudge right (on screen)"); // nothing happens before the pen is on a line
-    await settle();
-    expect(fake.called("plot_align_jog")).toEqual([]);
-    press("Go to a drawn line");
-    await settle();
-    await dialogs.updateComplete;
-    expect(app.state.plot.align?.target).not.toBeNull();
-    expect(app.state.machine.position).toEqual(app.state.plot.align?.target);
-    press("Pen down");
-    await settle();
-    press("Nudge right (on screen)");
-    await settle();
-    press("Nudge 0.5 mm");
-    await dialogs.updateComplete;
-    press("Nudge up (on screen)");
-    await settle();
-    await dialogs.updateComplete;
-    expect(fake.called("plot_align_pen")).toEqual([[true]]);
-    expect(fake.called("plot_align_jog")).toEqual([[0.1, 0], [0, -0.5]]);
-    expect(root.querySelector(".offset")?.textContent).toBe("Offset: X +0.10 mm, Y −0.50 mm");
-    press("Continue");
-    await settle();
-    expect(app.state.plot.state).toBe("plotting");
-    expect(fake.layerOffsets.get(1)).toEqual([0.1, -0.5]);
-  });
-
-  it("shows why a nudge was refused inside the pen-change dialog", async () => {
-    const { app, fake } = await readyToPlot();
-    const dialogs = await mount<Lit>("rp-dialogs");
-    await app.startPlot();
-    await app.plotAction("continue");
-    fake.finishLayer();
-    await settle();
-    await app.alignGoto();
-    await app.alignJog(1, 0, 11);
-    await dialogs.updateComplete;
-    expect(shadow(dialogs).querySelector(".lineup .hint")?.textContent).toMatch(/^That's more than 10 mm/);
-    await app.alignJog(1, 0, 0.1);
-    await dialogs.updateComplete;
-    expect(shadow(dialogs).querySelector(".lineup .hint")).toBeNull();
-  });
-
-  it("focuses Continue, so Enter continues rather than cancels the plot", async () => {
-    const { app } = await readyToPlot();
-    const dialogs = await mount<Lit>("rp-dialogs");
-    await app.startPlot();
-    await dialogs.updateComplete;
-    await dialogs.updateComplete;
-    const active = shadow(dialogs).activeElement as HTMLButtonElement | null;
-    expect(active?.textContent?.trim()).toBe("Continue");
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
-    await settle();
-    expect(app.state.plot.state).toBe("plotting");
-  });
-
-  it("Esc doesn't cancel the plot from the pen-change dialog", async () => {
-    const { app } = await readyToPlot();
-    await mount<Lit>("rp-dialogs");
-    await app.startPlot();
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-    await settle();
-    expect(app.state.plot.state).toBe("load_pen");
+    expect(shadow(dialogs).querySelector(".dialog")).toBeNull();
   });
 
   it("draws a confirmation with its two buttons", async () => {

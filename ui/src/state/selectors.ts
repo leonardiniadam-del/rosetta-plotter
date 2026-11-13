@@ -34,7 +34,12 @@ export function plotRunning(state: AppState): boolean {
   return state.machine.state === "plotting" || !AT_REST.includes(state.plot.state);
 }
 
-/** A dialog, or the pen-change dialog, has the window's attention: shortcuts wait. */
+/** A dialog has the window's attention: shortcuts wait. */
 export function modalOpen(state: AppState): boolean {
-  return state.dialog !== null || state.plot.state === "load_pen";
+  return state.dialog !== null;
+}
+
+/** A pen is asked for: the Plotter panel moves the pen so a new nib can be put on lines already drawn. */
+export function penChange(state: AppState): boolean {
+  return state.plot.state === "load_pen";
 }

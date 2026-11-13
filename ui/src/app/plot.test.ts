@@ -158,7 +158,71 @@ describe("plotting", () => {
     await settle();
     expect(fake.called("plot_start")).toHaveLength(2);
     expect(app.state.plot.state).toBe("load_pen");
-    expect(app.state.notice).toBeNull();
+    expect(app.state.notice?.message).toBe("Put the black pen in the holder (1 of 2), then click Continue.");
+  });
+
+  it("asks for each pen in the strip, with Continue and Cancel plot", async () => {
+    const { app } = await readyToPlot();
+    await app.startPlot();
+    expect(app.state.dialog).toBeNull(); // no pop-up: the Plotter panel stays in reach
+    expect(app.state.notice?.actions?.map((a) => a.label)).toEqual(["Continue", "Cancel plot"]);
+    app.state.notice?.actions?.[0].run();
+    await settle();
+    expect(app.state.plot.state).toBe("plotting");
+  });
+
+  it("a passing message doesn't lose the pen-change strip", async () => {
+    const { app } = await readyToPlot();
+    await app.startPlot();
+    app.explain("Something else.");
+    expect(app.state.notice?.message).toBe("Something else.");
+    app.dismissNotice();
+    expect(app.state.notice?.actions?.map((a) => a.label)).toEqual(["Continue", "Cancel plot"]);
+  });
+
+  it("at a pen change the arrows nudge the pen, and Continue plots it that far over", async () => {
+    const { app, fake } = await readyToPlot();
+    await app.startPlot();
+    await app.plotAction("continue");
+    fake.finishLayer();
+    await settle();
+    expect(app.state.plot.state).toBe("load_pen");
+    await app.movePenTo([30, 40]); // the Move pen tool: travel, not a nudge
+    expect(fake.called("plot_align_move")).toEqual([[30, 40]]);
+    expect(fake.called("plotter_goto")).toEqual([]);
+    await app.pen(true);
+    app.setJogStep(0.1);
+    await app.jog(1, 0);
+    app.setJogStep(0.5);
+    await app.jog(0, -1);
+    expect(fake.called("plot_align_pen")).toEqual([[true]]);
+    expect(fake.called("plot_align_jog")).toEqual([[0.1, 0], [0, -0.5]]);
+    expect(fake.called("plotter_jog")).toEqual([]);
+    expect(app.state.plot.align?.offset).toEqual([0.1, -0.5]);
+    expect(app.state.machine.position).toEqual([30.1, 39.5]);
+    await app.plotAction("continue");
+    expect(app.state.plot.state).toBe("plotting");
+    expect(fake.layerOffsets.get(1)).toEqual([0.1, -0.5]);
+  });
+
+  it("Home at a pen change starts the nudge again", async () => {
+    const { app, fake } = await readyToPlot();
+    await app.startPlot();
+    await app.jog(1, 0);
+    expect(app.state.plot.align?.offset).toEqual([1, 0]);
+    await app.movePenHome();
+    expect(app.state.plot.align?.offset).toEqual([0, 0]);
+    await app.plotAction("continue");
+    expect(fake.layerOffsets.size).toBe(0);
+  });
+
+  it("a nudge that's refused says why and keeps Continue", async () => {
+    const { app } = await readyToPlot();
+    await app.startPlot();
+    app.setJogStep(50);
+    await app.jog(1, 0);
+    expect(app.state.notice?.message).toMatch(/^The arrows nudge this pen at most 10 mm/);
+    expect(app.state.notice?.actions?.map((a) => a.label)).toEqual(["Continue", "Cancel plot"]);
   });
 
   it("explains instead of starting before Home", async () => {

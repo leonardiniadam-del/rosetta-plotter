@@ -84,7 +84,9 @@ export class RpPlotbar extends AppElement {
         reason: waiting ?? disabledReason("setHome", s),
         run: () => void app.setHome(),
       },
-      { label: "Start", iconName: "play", primary: !paused, reason: waiting ?? disabledReason("start", s), run: () => void app.startPlot() },
+      state === "load_pen"
+        ? { label: "Continue", iconName: "play", primary: true, tip: "The pen is in the holder: carry on plotting", reason: null, run: () => void app.plotAction("continue") }
+        : { label: "Start", iconName: "play", primary: !paused, reason: waiting ?? disabledReason("start", s), run: () => void app.startPlot() },
       { label: "Pause", iconName: "pause", reason: waiting ?? disabledReason("pause", s), run: () => app.pause() },
       { label: "Resume", iconName: "play", primary: paused, reason: waiting ?? disabledReason("resume", s), run: () => app.resumePlot() },
       {
@@ -94,7 +96,7 @@ export class RpPlotbar extends AppElement {
         reason: waiting ?? disabledReason("returnHome", s),
         run: () => void app.returnHome(),
       },
-      paused
+      paused || state === "load_pen"
         ? { label: "Cancel plot", iconName: "stop", reason: null, run: () => app.cancelPlot() }
         : { label: "Stop", iconName: "stop", reason: waiting ?? disabledReason("stop", s), run: () => app.stopPlot() },
     ];

@@ -433,8 +433,8 @@ class Api:
         return self._plot_reply()
 
     @_bridge
-    def plot_align_goto(self):
-        self._plot.align_goto()
+    def plot_align_move(self, x, y):
+        self._plot.align_move(_finite(x), _finite(y))
         return self._plot_reply()
 
     @_bridge
@@ -445,11 +445,6 @@ class Api:
     @_bridge
     def plot_align_pen(self, down):
         self._plot.align_pen(bool(down))
-        return self._plot_reply()
-
-    @_bridge
-    def plot_align_reset(self):
-        self._plot.align_reset()
         return self._plot_reply()
 
     @_bridge

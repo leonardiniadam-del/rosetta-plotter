@@ -11,7 +11,7 @@ import { toEdge, type PaperEdge } from "../geometry/snap";
 import { formatLength, type Units } from "../geometry/units";
 import { AT_REST } from "../state/plotting";
 import { disabledReason, type Control } from "../state/reasons";
-import { jobOf, pieceBoxOnPaper, plotRunning, selectedPieces, selectionBox } from "../state/selectors";
+import { jobOf, penChange, pieceBoxOnPaper, plotRunning, selectedPieces, selectionBox } from "../state/selectors";
 import { Store, type AppState, type Notice, type Tool, type ViewOptions } from "../state/store";
 
 export const ONE_DRAWING = "Select one drawing to resize or turn it.";
@@ -188,8 +188,13 @@ export class App {
     if (notice.kind === "info" && !notice.actions?.length && !notice.keep) this.noticeTimer = setTimeout(() => this.dismissNotice(), INFO_MS);
   }
 
+  /** Take the strip down. If the plot is waiting on the student (a pen change, a recovery step), its
+   *  strip comes back in place of any other notice, so its buttons are never lost behind a passing message. */
   dismissNotice(): void {
-    this.store.update({ notice: null });
+    const closing = this.state.notice;
+    const plot = this.state.plot;
+    const waiting = closing?.source === "plot" ? null : this.recoveryNotice(plot.state, plot.message, plot.details);
+    this.store.update({ notice: waiting });
   }
 
   fail(error: unknown): void {
@@ -348,7 +353,7 @@ export class App {
     if (this.blocked("move")) return;
     const step = this.state.jogStep;
     const [x, y] = this.machineDirection(dx, dy);
-    await this.plotterAction(() => this.client.hardware("plotter_jog", x * step, y * step));
+    await this.moveBy(x * step, y * step);
   }
 
   /** The hold under way, if any: a new press or a release replaces it, which ends its loop. */
@@ -371,7 +376,7 @@ export class App {
       while (this.holding === hold && disabledReason("move", this.state) === null) {
         const [x, y] = this.machineDirection(dx, dy);
         const each = this.state.jogStep < 1 ? this.state.jogStep : HOLD_MOVE_MM; // a fine step stays fine while held
-        const moved = await this.plotterAction(() => this.client.hardware("plotter_jog", x * each, y * each));
+        const moved = await this.moveBy(x * each, y * each);
         const now = this.state.machine.position;
         if (!moved || !now || (last && now[0] === last[0] && now[1] === last[1])) break;
         last = now;
@@ -387,7 +392,8 @@ export class App {
 
   async movePenTo([x, y]: Point): Promise<void> {
     if (this.blocked("move")) return;
-    await this.plotterAction(() => this.client.hardware("plotter_goto", x, y));
+    if (penChange(this.state)) await this.align(() => this.client.hardware("plot_align_move", x, y));
+    else await this.plotterAction(() => this.client.hardware("plotter_goto", x, y));
   }
 
   movePenHome(): Promise<void> {
@@ -417,10 +423,12 @@ export class App {
 
   async pen(down: boolean): Promise<void> {
     if (this.blocked("pen")) return;
-    await this.plotterAction(() => this.client.hardware("plotter_pen", down));
+    if (penChange(this.state)) await this.align(() => this.client.hardware("plot_align_pen", down));
+    else await this.plotterAction(() => this.client.hardware("plotter_pen", down));
   }
 
   async testMark(): Promise<void> {
+    if (penChange(this.state)) return this.explain("A test mark can't be drawn in the middle of a plot.");
     if (this.blocked("move")) return;
     await this.plotterAction(() => this.client.hardware("plotter_test_mark"));
   }
@@ -1063,6 +1071,7 @@ export class App {
   private recoveryNotice(state: string, message: string, details: string): Notice | null {
     const run = (action: PlotAction) => () => void this.plotAction(action);
     const recoveries: Record<string, [Notice["kind"], string, PlotAction]> = {
+      load_pen: ["info", "Continue", "continue"],
       reconnect: ["warning", "Continue", "reconnect"],
       slide_home: ["warning", "It's in the corner", "rehomed"],
       not_connected: ["error", "Retry", "retry"],
@@ -1104,45 +1113,31 @@ export class App {
     }
   }
 
-  // Lining up a new pen at a pen change (bridge.md): go to a drawn line, lower the pen, nudge it on.
+  // Lining up a new pen at a pen change (bridge.md): the Plotter panel's moves go through plot_align_*.
 
-  private aligning = false;
-
-  /** One line-up move at a time; a refusal is shown in the pen-change dialog, which covers the strip. */
-  private async align(work: () => Promise<{ plot: PlotStatus; machine: MachineStatus }>): Promise<void> {
-    if (this.aligning) return;
-    this.aligning = true;
+  /** One pen move at a pen change. A refusal goes in the pen-change strip, which keeps its buttons. */
+  private async align(work: () => Promise<{ plot: PlotStatus; machine: MachineStatus }>): Promise<boolean> {
     const seen = this.plotEvents;
     try {
       const reply = await work();
       this.setMachine(reply.machine);
       // A plot_state event that came while waiting is newer than the reply's picture of the plot.
-      this.store.update(seen === this.plotEvents ? { plot: reply.plot, alignProblem: null } : { alignProblem: null });
+      if (seen === this.plotEvents) this.store.update({ plot: reply.plot });
+      return true;
     } catch (error) {
-      this.store.update({ alignProblem: problemOf(error).message });
       await this.refreshPlot();
-    } finally {
-      this.aligning = false;
+      const problem = problemOf(error);
+      const notice = this.recoveryNotice(this.state.plot.state, problem.message, problem.details);
+      if (notice) this.notify({ ...notice, kind: "warning" });
+      else this.fail(error);
+      return false;
     }
   }
 
-  /** Send the pen (up) to the start of a line an earlier pen drew; again goes to another line. */
-  alignGoto(): Promise<void> {
-    return this.align(() => this.client.hardware("plot_align_goto"));
-  }
-
-  /** Nudge the pen `step` mm in a screen direction: (1, 0) is right on screen. */
-  alignJog(dx: number, dy: number, step: number): Promise<void> {
-    const [x, y] = this.machineDirection(dx, dy);
-    return this.align(() => this.client.hardware("plot_align_jog", x * step, y * step));
-  }
-
-  alignPen(down: boolean): Promise<void> {
-    return this.align(() => this.client.hardware("plot_align_pen", down));
-  }
-
-  alignReset(): Promise<void> {
-    return this.align(() => this.client.hardware("plot_align_reset"));
+  /** A pen-up move by (dx, dy) machine mm: a nudge at a pen change, a plain jog otherwise. */
+  private moveBy(dx: number, dy: number): Promise<boolean> {
+    if (penChange(this.state)) return this.align(() => this.client.hardware("plot_align_jog", dx, dy));
+    return this.plotterAction(() => this.client.hardware("plotter_jog", dx, dy));
   }
 
   async startPlot(): Promise<void> {

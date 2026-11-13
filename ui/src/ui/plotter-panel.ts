@@ -1,5 +1,5 @@
 /** The Plotter panel (spec §2.5): the model, the pen, its live height, a test mark, and the jog pad. */
-import { css, html } from "lit";
+import { css, html, nothing } from "lit";
 import { live } from "lit/directives/live.js";
 import { JOG_STEPS } from "../app/app";
 import { disabledReason } from "../state/reasons";
@@ -60,6 +60,10 @@ export class RpPlotterPanel extends AppElement {
         justify-content: center;
         font-size: var(--font-size-small);
       }
+      .offset .value {
+        min-width: 0;
+        font-variant-numeric: tabular-nums;
+      }
       .wide {
         flex: 1;
         justify-content: center;
@@ -88,6 +92,17 @@ export class RpPlotterPanel extends AppElement {
     >
       ${icon(iconName)}${label}
     </button>`;
+  }
+
+  /** At a pen change: how far the arrows have nudged the new pen, which is how far over it will plot. */
+  private offset() {
+    const align = this.s.plot.align;
+    if (!align?.available) return nothing;
+    const signed = (mm: number) => `${mm > 0 ? "+" : mm < 0 ? "\u2212" : ""}${Math.abs(mm).toFixed(2)}`;
+    const [x, y] = align.offset;
+    return html`<div class="line offset" role="status"
+      title="Nudge the new pen onto a line the last pen drew. This pen is then plotted this far over. The Move pen tool and Home don't count."
+    >This pen plots <span class="value">X ${signed(x)}, Y ${signed(y)} mm</span> over</div>`;
   }
 
   private releaseHold = (): void => this.app.jogRelease();
@@ -197,6 +212,7 @@ export class RpPlotterPanel extends AppElement {
         ${this.arrow("Move pen right (on screen)", "arrowRight", move, 1, 0)}
         <span></span>${this.arrow("Move pen down (on screen)", "arrowDown", move, 0, 1)}<span></span>
       </div>
+      ${this.offset()}
       <div class="steps" role="group" aria-label="Step for each press, in mm">
         ${JOG_STEPS.map(
           (step) => html`<button

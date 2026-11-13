@@ -53,6 +53,17 @@ describe("plot bar", () => {
     expect(button(root, "Start").getAttribute("aria-disabled")).toBe("true");
   });
 
+  it("at a pen change offers Continue and Cancel plot", async () => {
+    const { app } = await readyToPlot();
+    await app.startPlot();
+    const root = shadow(await mount<Lit>("rp-plotbar"));
+    const labels = Array.from(root.querySelectorAll("button")).map((b) => b.textContent?.trim());
+    expect(labels).toEqual(["Set Home", "Continue", "Pause", "Resume", "Return Home", "Cancel plot"]);
+    button(root, "Continue").click();
+    await settle();
+    expect(app.state.plot.state).toBe("plotting");
+  });
+
   it("Return Home sends the pen Home when nothing is plotting", async () => {
     const { fake } = await readyToPlot();
     const root = shadow(await mount<Lit>("rp-plotbar"));

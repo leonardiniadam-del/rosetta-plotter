@@ -101,16 +101,16 @@ export interface PlotStatus {
   name: string | null;
   message: string;
   details: string;
-  /** At a pen change: lining the new pen up with lines already drawn (bridge.md "Lining up a new pen"). */
+  /** At a pen change: nudging the new pen onto lines already drawn (bridge.md "Lining up a new pen"). */
   align?: PlotAlign;
 }
 
 export interface PlotAlign {
-  /** True while a pen is asked for and an earlier pen has drawn something to line up with. */
+  /** True while a pen is asked for: the Plotter panel then moves the pen through plot_align_*. */
   available: boolean;
-  /** The drawn point the pen was sent to, in machine mm; null until Go to a drawn line. */
+  /** Where the pen last travelled to, in machine mm; null while it hasn't left Home. */
   target: [number, number] | null;
-  /** How far the pen has been nudged from it, in machine mm: this pen plots that far over. */
+  /** How far the arrows have nudged the pen since, in machine mm: this pen plots that far over. */
   offset: [number, number];
 }
 
@@ -242,10 +242,9 @@ export interface Api {
   plot_trace(): MachineReply;
   plot_start(): PlotReply;
   plot_continue(): PlotReply;
-  plot_align_goto(): PlotReply;
+  plot_align_move(x: number, y: number): PlotReply;
   plot_align_jog(dx: number, dy: number): PlotReply;
   plot_align_pen(down: boolean): PlotReply;
-  plot_align_reset(): PlotReply;
   plot_pause(): PlotReply;
   plot_resume(): PlotReply;
   plot_home(): PlotReply;
